@@ -14,13 +14,23 @@ const pickUnit = picker(['category', 'name', 'spec', 'unit', 'material_cost', 'l
   'material_price', 'labor_price', 'note', 'active'],
   ['material_cost', 'labor_cost', 'material_price', 'labor_price', 'active']);
 
+// 同 /vendors：開估價單要挑工項，所以不綁模組權限。但成本單價是公司的底價，
+// 沒有估價或單價庫權限的人（例如工務）不該拿得到 —— 這跟「工務看不到專案損益」是同一件事。
 router.get('/unit-prices', requireStaff(), (req, res) => {
   const { category = '', q = '', active = '' } = req.query;
   const like = `%${String(q).trim()}%`;
-  res.json(db.prepare(`SELECT * FROM unit_prices
+  const rows = db.prepare(`SELECT * FROM unit_prices
     WHERE (? = '' OR category = ?) AND (? = '' OR active = ?)
       AND (? = '' OR name LIKE ? OR spec LIKE ?)
-    ORDER BY category, name`).all(category, category, active, active, String(q).trim(), like, like));
+    ORDER BY category, name`).all(category, category, active, active, String(q).trim(), like, like);
+  const canSeeCost = req.user.role === 'admin'
+    || req.userModules.includes('unitprices') || req.userModules.includes('quotes');
+  if (!canSeeCost) {
+    return res.json(rows.map(r => ({
+      id: r.id, category: r.category, name: r.name, spec: r.spec, unit: r.unit, active: r.active
+    })));
+  }
+  res.json(rows);
 });
 
 router.post('/unit-prices', requireStaff('unitprices'), (req, res) => {

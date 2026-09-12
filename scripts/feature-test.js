@@ -200,6 +200,19 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   await req('POST', '/api/login', { username: 'foreman', password: 'work123' });
   ok('工務看不到專案損益', (await req('GET', '/api/profit')).status === 403);
   ok('工務看得到工地日報', (await req('GET', `/api/site-logs?project_id=${pj.id}`)).status === 200);
+  // 工班名單與工項單價庫不綁模組權限（各模組的下拉選單都要用），
+  // 但「需要一份名單」不等於「可以看底價」——沒有權限的人只拿得到選單需要的欄位。
+  const foremanUnits = (await req('GET', '/api/unit-prices')).body;
+  ok('工務拿得到工項名單（開單挑項目要用）', Array.isArray(foremanUnits) && foremanUnits.length > 0);
+  ok('但工務看不到工項的成本單價', foremanUnits.every(u => u.material_cost === undefined),
+    JSON.stringify(foremanUnits[0]));
+  await req('POST', '/api/logout');
+  await req('POST', '/api/login', { username: 'designer', password: 'design123' });
+  const designerVendors = (await req('GET', '/api/vendors')).body;
+  ok('設計師拿得到工班名單（選責任工班要用）', Array.isArray(designerVendors) && designerVendors.length > 0);
+  ok('但設計師看不到工班的匯款帳戶', designerVendors.every(v => v.bank_info === undefined),
+    JSON.stringify(designerVendors[0]));
+  eq('設計師不能新增工班', (await req('POST', '/api/vendors', { name: '權限測試' })).status, 403);
 
   console.log('\n上傳檔案與照片');
   // 隱蔽工程沒拍到照，日後的責任歸屬就是幾萬到幾十萬。所以上傳這條路徑
@@ -311,6 +324,112 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   ok('停用後歷史紀錄還指得到這個人',
     (await req('GET', '/api/users')).body.some(u => u.id === designer.id && !u.active));
   await req('PUT', `/api/users/${designer.id}`, { active: 1 });   // 還原，不要污染示範資料
+
+  console.log('\n資料同步：同一個數字在不同頁要一樣');
+  // 這套系統最大的風險不是算錯，是「兩頁算出不一樣的答案」—— 使用者會不知道要信哪一個，
+  // 然後兩個都不信，回去用 Excel。所以金額的定義只有 src/finance.js 一處，
+  // 這一段就是確認每一頁真的都走那一處。
+  const sumOf = (a, k) => a.reduce((x, r) => x + (r[k] || 0), 0);
+  const allProjects = (await req('GET', '/api/projects')).body;
+  const arAll = (await req('GET', '/api/receivables')).body;
+  const pfAll = (await req('GET', '/api/profit')).body;
+  const dbAll = (await req('GET', '/api/dashboard')).body;
+  const apAll = (await req('GET', '/api/payables')).body;
+
+  const mismatch = [];
+  let retentionSum = 0, warrantySum = 0;
+  for (const p of allProjects) {
+    const money = (await req('GET', `/api/projects/${p.id}/detail`)).body.money;
+    retentionSum += money.retention_held;
+    warrantySum += money.warranty_held;
+    const a = arAll.rows.find(r => r.project_id === p.id);
+    const f = pfAll.rows.find(r => r.id === p.id);
+    const s2 = dbAll.projects.find(r => r.id === p.id);
+    const cmp = (where, got, want, label) => {
+      if (got !== want) mismatch.push(`${p.code} ${where}${label} ${got} ≠ 詳情 ${want}`);
+    };
+    if (a) {
+      cmp('應收', a.contract_total, money.contract_total, '合約總價');
+      cmp('應收', a.received, money.received, '已收');
+      cmp('應收', a.overdue, money.overdue, '逾期');
+    }
+    if (f) {
+      cmp('損益', f.contract_total, money.contract_total, '合約總價');
+      cmp('損益', f.cost_committed, money.cost_committed, '成本');
+      cmp('損益', f.gross_profit, money.gross_profit, '毛利');
+    }
+    if (s2) {
+      cmp('儀表板', s2.contract_total, money.contract_total, '合約總價');
+      cmp('儀表板', s2.received, money.received, '已收');
+    }
+    cmp('案場清單', p.contract_total, money.contract_total, '合約總價');
+    if (money.cost_committed !== money.sub_committed + money.material_cost + money.expense_cost) {
+      mismatch.push(`${p.code} 成本合計 ${money.cost_committed} ≠ 發包＋建材＋雜支`);
+    }
+    if (money.gross_profit !== money.contract_total - money.cost_committed) {
+      mismatch.push(`${p.code} 毛利 ${money.gross_profit} ≠ 合約總價 − 成本`);
+    }
+  }
+  ok(`${allProjects.length} 個案子在詳情／應收／損益／儀表板／案場清單的數字一致`,
+    mismatch.length === 0, mismatch.slice(0, 5).join(' ｜ '));
+
+  ok('應收合計等於逐列加總',
+    arAll.sum.ready === sumOf(arAll.rows, 'ready') && arAll.sum.overdue === sumOf(arAll.rows, 'overdue')
+    && arAll.sum.received === sumOf(arAll.rows, 'received'));
+  ok('損益合計等於逐列加總',
+    pfAll.sum.contract_total === sumOf(pfAll.rows, 'contract_total')
+    && pfAll.sum.gross_profit === sumOf(pfAll.rows, 'gross_profit'));
+  ok('應付合計等於逐列加總', apAll.sum === sumOf(apAll.rows, 'net_amount'));
+  ok('儀表板總計等於在建案場逐案加總',
+    dbAll.summary.contract_total === sumOf(dbAll.projects, 'contract_total')
+    && dbAll.summary.received === sumOf(dbAll.projects, 'received')
+    && dbAll.summary.receivable === sumOf(dbAll.projects, 'receivable'));
+  ok('押著的保留款：應付頁總額等於逐案加總',
+    retentionSum === sumOf(apAll.held, 'retention_held'),
+    `逐案 ${retentionSum} vs 應付頁 ${sumOf(apAll.held, 'retention_held')}`);
+  ok('押著的保固金：應付頁總額等於逐案加總',
+    warrantySum === sumOf(apAll.held, 'warranty_held'));
+
+  const bd = (await req('GET', `/api/profit/${pj.id}/breakdown`)).body;
+  const pjMoney = (await req('GET', `/api/projects/${pj.id}/detail`)).body.money;
+  ok('成本結構下鑽的金額等於案場詳情',
+    bd.money.cost_committed === pjMoney.cost_committed && bd.money.gross_profit === pjMoney.gross_profit);
+  eq('下鑽的雜支分組加總等於詳情雜支', sumOf(bd.expenses, 'amount'), pjMoney.expense_cost);
+
+  // 業主端是另一條資料路徑（不需帳號、欄位自己挑過），最容易跟員工端對不起來
+  // 用 clink：上一段重新產生過連結，舊 token 依設計已經失效
+  const ctoken = clink.client_token || clink.token;
+  const clientView = await (await fetch(`http://127.0.0.1:${PORT}/api/client/${ctoken}`)).json();
+  eq('業主端合約總價等於員工端', clientView.money.contract_total, pjMoney.contract_total);
+  eq('業主端已付等於員工端已收', clientView.money.paid, pjMoney.received);
+  eq('業主端未付等於合約總價減已付',
+    clientView.money.outstanding, clientView.money.contract_total - clientView.money.paid);
+
+  // 動一筆資料，看四個地方是不是真的同時跟著動
+  const syncCo = (await req('POST', '/api/changes',
+    { project_id: pj.id, title: '同步驗證追加', reason: 'client' })).body;
+  await req('POST', `/api/changes/${syncCo.id}/items`,
+    { kind: 'add', name: '同步驗證項目', unit: '式', qty: 1, unit_price: 50000 });
+  const beforeSync = (await req('GET', `/api/projects/${pj.id}/detail`)).body.money.contract_total;
+  await req('POST', `/api/changes/${syncCo.id}/status`, { status: 'sent' });
+  eq('送簽但沒簽認：合約總價不動',
+    (await req('GET', `/api/projects/${pj.id}/detail`)).body.money.contract_total, beforeSync);
+  await req('POST', `/api/changes/${syncCo.id}/status`, { status: 'signed', signed_name: '同步測試' });
+  const afterSync = (await req('GET', `/api/projects/${pj.id}/detail`)).body.money.contract_total;
+  eq('簽認後案場詳情加上去了', afterSync, beforeSync + 50000);
+  eq('應收頁同步',
+    (await req('GET', '/api/receivables')).body.rows.find(r => r.project_id === pj.id).contract_total, afterSync);
+  eq('損益頁同步',
+    (await req('GET', '/api/profit')).body.rows.find(r => r.id === pj.id).contract_total, afterSync);
+  eq('業主端同步',
+    (await (await fetch(`http://127.0.0.1:${PORT}/api/client/${ctoken}`)).json()).money.contract_total, afterSync);
+  eq('已簽認的變更單刪不掉（軌跡要連得起來）',
+    (await req('DELETE', `/api/changes/${syncCo.id}`)).status, 400);
+  await req('POST', `/api/changes/${syncCo.id}/status`, { status: 'void' });
+  eq('作廢後案場詳情回到原值',
+    (await req('GET', `/api/projects/${pj.id}/detail`)).body.money.contract_total, beforeSync);
+  eq('作廢後應收也跟著回去',
+    (await req('GET', '/api/receivables')).body.rows.find(r => r.project_id === pj.id).contract_total, beforeSync);
 
   console.log('\n清理測試資料');
   await req('POST', '/api/logout');

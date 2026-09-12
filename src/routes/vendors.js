@@ -17,6 +17,11 @@ const router = express.Router();
 const pickVendor = picker(['name', 'kind', 'trade', 'contact', 'phone', 'tax_id', 'bank_info', 'rating',
   'liability_expiry', 'labor_insured', 'note', 'active'], ['rating', 'labor_insured', 'active']);
 
+// 這支刻意不綁模組權限：缺失要選責任工班、訂料要選廠商、雜支要選廠商，
+// 這些模組的人都需要工班名單。但「需要一份名單」不等於「可以看匯款帳戶」——
+// 沒有 vendors 模組的人只拿得到下拉選單需要的欄位。
+const VENDOR_PICK_FIELDS = ['id', 'name', 'kind', 'trade', 'active'];
+
 router.get('/vendors', requireStaff(), (req, res) => {
   const { trade = '', kind = '', q = '', active = '' } = req.query;
   const like = `%${String(q).trim()}%`;
@@ -33,6 +38,9 @@ router.get('/vendors', requireStaff(), (req, res) => {
   for (const r of rows) {
     // 保險過期的工班還在派工，出事是公司扛 —— 清單上直接標出來
     r.insurance_expired = !!(r.liability_expiry && r.liability_expiry < t);
+  }
+  if (req.user.role !== 'admin' && !req.userModules.includes('vendors')) {
+    return res.json(rows.map(r => Object.fromEntries(VENDOR_PICK_FIELDS.map(k => [k, r[k]]))));
   }
   res.json(rows);
 });
