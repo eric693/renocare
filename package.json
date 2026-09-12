@@ -1,0 +1,22 @@
+{
+  "name": "renocare",
+  "version": "1.0.0",
+  "description": "RenoCare 宅匠 室內設計／裝修工程營運管理系統：估價與工項單價庫、追加減帳簽認、請款節點與應收、發包估驗與保留款、工序相依排程、工地日報與照片留證、缺失驗收與保固、專案即時損益、業主端進度與線上簽認",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node scripts/seed.js",
+    "test": "node scripts/feature-test.js",
+    "test:money": "node scripts/money-test.js",
+    "test:ui": "node scripts/ui-test.js",
+    "test:all": "node scripts/feature-test.js && node scripts/ui-test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.2"
+  }
+}

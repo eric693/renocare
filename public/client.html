@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>工程進度</title>
+<meta name="theme-color" content="#1f5f8b">
+<style>
+  /* 業主端刻意不共用後台的樣式：這是給不會用系統的人看的畫面，
+     一頁到底、字大、按鈕大，手機上單手可操作。 */
+  :root { --pri:#1f5f8b; --pri-l:#e8f1f7; --ok:#1b8a5a; --warn:#b8860b; --danger:#c0392b;
+          --bd:#e2e8ea; --mut:#6b7b83; --bg:#f4f6f8; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:#22333b; font-size:15px; line-height:1.7;
+         font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  header { background:var(--pri); color:#fff; padding:18px 16px; }
+  header h1 { margin:0; font-size:19px; }
+  header .sub { opacity:.85; font-size:13px; margin-top:3px; }
+  main { max-width:760px; margin:0 auto; padding:14px 12px 60px; }
+  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .card h2 { font-size:15px; margin:0 0 10px; color:var(--pri); }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:6px 0; border-bottom:1px solid var(--bd); }
+  .row:last-child { border-bottom:none; }
+  .row .k { color:var(--mut); font-size:13px; }
+  .row .v { font-weight:600; text-align:right; }
+  .big { font-size:22px; font-weight:700; color:var(--pri); }
+  .prog { height:10px; background:var(--bd); border-radius:6px; overflow:hidden; margin:8px 0 4px; }
+  .prog i { display:block; height:100%; background:var(--pri); }
+  .step { display:flex; gap:10px; padding:8px 0; border-bottom:1px solid var(--bd); align-items:center; }
+  .step:last-child { border-bottom:none; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--bd); flex:none; }
+  .dot.done { background:var(--ok); } .dot.working { background:var(--warn); }
+  .step .n { flex:1; }
+  .step .d { color:var(--mut); font-size:12.5px; }
+  .tag { display:inline-block; font-size:12px; padding:1px 8px; border-radius:20px; background:var(--pri-l); color:var(--pri); }
+  .tag.ok { background:#e8f5ee; color:var(--ok); } .tag.warn { background:#fbf3e0; color:var(--warn); }
+  .tag.danger { background:#fdecea; color:var(--danger); }
+  .photos { display:grid; grid-template-columns:repeat(auto-fill,minmax(100px,1fr)); gap:6px; }
+  .photos a { display:block; }
+  .photos img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; display:block; }
+  .btn { display:inline-block; border:none; background:var(--pri); color:#fff; padding:11px 18px;
+         border-radius:8px; font-size:15px; cursor:pointer; }
+  .btn.sec { background:#fff; color:var(--pri); border:1px solid var(--pri); }
+  .btn:disabled { opacity:.5; }
+  .co { border:1px solid var(--bd); border-radius:10px; padding:12px; margin-bottom:10px; }
+  .co.pending { border-color:var(--warn); background:#fffdf6; }
+  input, textarea { width:100%; padding:10px; border:1px solid var(--bd); border-radius:8px; font-size:15px; font-family:inherit; }
+  label { display:block; font-size:13px; color:var(--mut); margin:8px 0 3px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td, th { padding:6px 4px; border-bottom:1px solid var(--bd); text-align:left; }
+  th { color:var(--mut); font-weight:600; font-size:12.5px; }
+  .num { text-align:right; }
+  .mut { color:var(--mut); font-size:13px; }
+  .center { text-align:center; padding:40px 16px; color:var(--mut); }
+  dialog { border:none; border-radius:12px; padding:18px; max-width:420px; width:92%; }
+  dialog::backdrop { background:rgba(0,0,0,.4); }
+</style>
+</head>
+<body>
+<header><h1 id="h-title">載入中…</h1><div class="sub" id="h-sub"></div></header>
+<main id="app"><div class="center">載入中…</div></main>
+<dialog id="dlg"><div id="dlg-body"></div></dialog>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => 'NT$ ' + Math.round(Number(n)||0).toLocaleString('zh-TW');
+const TOKEN = location.hash.slice(1);
+const STATUS = { lead:'洽談中', design:'設計中', contracted:'已簽約', construction:'施工中',
+  acceptance:'驗收中', warranty:'保固中', closed:'已完成', lost:'' };
+const MS = { pending:'未到', ready:'即將請款', invoiced:'已請款', paid:'已付款', void:'取消' };
+const DF = { open:'待處理', fixing:'處理中', fixed:'已完成待確認', verified:'已確認完成', void:'免辦' };
+const PHASE = { before:'施工前', during:'施工中', after:'完工', defect:'待改善', hidden:'隱蔽工程' };
+
+async function api(path, opts = {}) {
+  if (opts.body) { opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify(opts.body); }
+  const r = await fetch('/api/client/' + TOKEN + path, opts);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || '操作失敗');
+  return d;
+}
+
+function dialog(html, onOpen) {
+  const dlg = document.getElementById('dlg');
+  document.getElementById('dlg-body').innerHTML = html;
+  dlg.showModal();
+  onOpen && onOpen(dlg);
+}
+function closeDialog() { document.getElementById('dlg').close(); }
+
+async function load() {
+  if (!TOKEN) { document.getElementById('app').innerHTML = '<div class="center">連結不完整，請向您的設計師索取正確連結。</div>'; return; }
+  let d;
+  try { d = await api(''); }
+  catch (e) {
+    document.getElementById('app').innerHTML = `<div class="center">${esc(e.message)}</div>`;
+    return;
+  }
+  const p = d.project, m = d.money;
+  document.title = p.name;
+  document.getElementById('h-title').textContent = p.name;
+  document.getElementById('h-sub').textContent = `${d.company}　${p.address || ''}`;
+
+  const pending = d.changes.filter(c => c.status === 'sent');
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    ${pending.length ? `<div class="card" style="border-left:4px solid var(--warn)">
+      <h2>有 ${pending.length} 項變更需要您確認</h2>
+      <div class="mut">確認之後我們才會施作並計入工程款；有疑問請直接聯絡您的設計師。</div>
+      ${pending.map(c => coCard(c)).join('')}
+    </div>` : ''}
+
+    <div class="card">
+      <h2>工程進度</h2>
+      <div class="big">${p.progress === null ? '尚未開工' : p.progress + '%'}</div>
+      <div class="prog"><i style="width:${p.progress || 0}%"></i></div>
+      <div class="row"><span class="k">目前階段</span><span class="v">${esc(STATUS[p.status] || '')}</span></div>
+      <div class="row"><span class="k">開工日</span><span class="v">${esc(p.start_date || '—')}</span></div>
+      <div class="row"><span class="k">預計完工</span><span class="v">${esc(p.due_date || '—')}</span></div>
+      ${p.handover_date ? `<div class="row"><span class="k">交屋日</span><span class="v">${esc(p.handover_date)}</span></div>` : ''}
+    </div>
+
+    <div class="card">
+      <h2>施工進度表</h2>
+      ${d.schedule.length ? d.schedule.map(s => `<div class="step">
+        <span class="dot ${s.status === 'done' ? 'done' : s.status === 'working' ? 'working' : ''}"></span>
+        <span class="n">${esc(s.name)}<div class="d">${esc(s.planned_start || '')} ~ ${esc(s.planned_end || '')}</div></span>
+        <span>${s.status === 'done' ? '<span class="tag ok">完成</span>'
+          : s.status === 'working' ? '<span class="tag warn">進行中</span>' : `<span class="mut">${s.progress || 0}%</span>`}</span>
+      </div>`).join('') : '<div class="mut">工程排程尚未排定。</div>'}
+    </div>
+
+    <div class="card">
+      <h2>工程款</h2>
+      <div class="row"><span class="k">合約金額</span><span class="v">${money(m.contract_amount)}</span></div>
+      ${m.change_signed ? `<div class="row"><span class="k">已確認變更追加</span><span class="v">${money(m.change_signed)}</span></div>` : ''}
+      <div class="row"><span class="k">合約總金額</span><span class="v big" style="font-size:17px">${money(m.contract_total)}</span></div>
+      <div class="row"><span class="k">已付款</span><span class="v">${money(m.paid)}</span></div>
+      <div class="row"><span class="k">尚未付款</span><span class="v">${money(m.outstanding)}</span></div>
+      ${d.milestones.length ? `<table><thead><tr><th>付款階段</th><th class="num">金額</th><th class="num">已付</th><th>狀態</th></tr></thead>
+        <tbody>${d.milestones.map(x => `<tr><td>${esc(x.name)}</td><td class="num">${money(x.amount)}</td>
+          <td class="num">${money(x.received)}</td>
+          <td>${x.status === 'paid' ? '<span class="tag ok">已付款</span>' : esc(MS[x.status] || '')}</td></tr>`).join('')}
+        </tbody></table>` : ''}
+    </div>
+
+    ${d.changes.length ? `<div class="card"><h2>變更紀錄</h2>
+      ${d.changes.map(c => coCard(c)).join('')}</div>` : ''}
+
+    <div class="card">
+      <h2>現場照片（${d.photos.length}）</h2>
+      ${d.photos.length ? `<div class="photos">${d.photos.map(ph => `<a href="${esc(ph.url)}" target="_blank" rel="noopener">
+        <img src="${esc(ph.url)}" loading="lazy" alt="${esc(ph.caption || '')}"></a>`).join('')}</div>`
+      : '<div class="mut">目前還沒有照片。</div>'}
+    </div>
+
+    ${d.logs.length ? `<div class="card"><h2>近期施工日誌</h2>
+      ${d.logs.map(l => `<div class="step"><span class="n"><b>${esc(l.date)}</b>
+        <span class="mut">${esc(l.weather || '')}　${esc(l.trades || '')}</span>
+        <div class="d">${esc(l.progress_note || '')}</div></span></div>`).join('')}</div>` : ''}
+
+    ${d.drawings.length ? `<div class="card"><h2>設計圖面</h2>
+      ${d.drawings.map(w => `<div class="row"><span class="k">${esc(w.name)} ${esc(w.version)}</span>
+        <span class="v"><a href="${esc(w.url)}" target="_blank" rel="noopener">開啟</a></span></div>`).join('')}</div>` : ''}
+
+    <div class="card">
+      <h2>我要反映問題</h2>
+      <div class="mut">施工中或保固期內發現任何狀況，寫在這裡會直接進入我們的追蹤清單。</div>
+      <div style="margin-top:10px"><button class="btn" id="rep">反映一件事</button></div>
+      ${d.defects.length ? `<table style="margin-top:12px"><thead><tr><th>項目</th><th>提出日</th><th>狀態</th></tr></thead>
+        <tbody>${d.defects.map(x => `<tr><td>${esc(x.location || '')}${esc(x.item)}</td>
+          <td class="mut">${esc(x.found_date)}</td>
+          <td>${x.status === 'verified' ? '<span class="tag ok">已完成</span>' : esc(DF[x.status] || '')}</td></tr>`).join('')}
+        </tbody></table>` : ''}
+    </div>
+
+    <div class="card">
+      <h2>聯絡我們</h2>
+      ${d.contact.designer ? `<div class="row"><span class="k">設計師</span><span class="v">${esc(d.contact.designer.name)}
+        ${d.contact.designer.phone ? `<a href="tel:${esc(d.contact.designer.phone)}">${esc(d.contact.designer.phone)}</a>` : ''}</span></div>` : ''}
+      ${d.contact.supervisor ? `<div class="row"><span class="k">工務</span><span class="v">${esc(d.contact.supervisor.name)}
+        ${d.contact.supervisor.phone ? `<a href="tel:${esc(d.contact.supervisor.phone)}">${esc(d.contact.supervisor.phone)}</a>` : ''}</span></div>` : ''}
+    </div>`;
+
+  app.querySelectorAll('[data-co]').forEach(b => b.onclick = () => showChange(b.dataset.co));
+  app.querySelector('#rep').onclick = () => reportDialog();
+}
+
+function coCard(c) {
+  const cls = c.status === 'sent' ? 'co pending' : 'co';
+  return `<div class="${cls}">
+    <div style="display:flex;justify-content:space-between;gap:10px">
+      <b>${esc(c.title)}</b>
+      <span class="v">${money(c.amount)}</span>
+    </div>
+    ${c.detail ? `<div class="mut">${esc(c.detail)}</div>` : ''}
+    ${c.days_delay ? `<div class="mut">工期展延 ${c.days_delay} 天</div>` : ''}
+    <div style="margin-top:8px">
+      ${c.status === 'sent' ? `<button class="btn" data-co="${c.id}">查看並確認</button>`
+      : c.status === 'signed' ? `<span class="tag ok">已於 ${esc((c.signed_at || '').slice(0, 10))} 由 ${esc(c.signed_name)} 確認</span>`
+        : `<span class="tag danger">未同意</span>`}
+    </div>
+  </div>`;
+}
+
+async function showChange(id) {
+  const c = await api('/changes/' + id);
+  dialog(`<h3 style="margin:0 0 6px">${esc(c.title)}</h3>
+    <div class="mut">${esc(c.detail || '')}</div>
+    <table style="margin:10px 0"><thead><tr><th>項目</th><th class="num">數量</th><th class="num">金額</th></tr></thead>
+      <tbody>${c.items.map(i => `<tr><td>${i.kind === 'deduct' ? '（減）' : ''}${esc(i.name)}
+        <div class="mut">${esc(i.spec || '')}</div></td>
+        <td class="num">${i.qty} ${esc(i.unit)}</td><td class="num">${money(i.amount)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><th colspan="2">合計</th><th class="num">${money(c.amount)}</th></tr></tfoot></table>
+    ${c.days_delay ? `<div class="mut">確認後工期將展延 ${c.days_delay} 天。</div>` : ''}
+    <label>您的姓名（作為確認依據）</label><input id="sg-name" autocomplete="name">
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn" id="sg-yes">我同意此項變更</button>
+      <button class="btn sec" id="sg-no">暫不同意</button>
+      <button class="btn sec" id="sg-cancel">關閉</button>
+    </div>
+    <div class="mut" style="margin-top:8px">按下「我同意」即表示您確認此項變更內容與金額，系統會記錄您的姓名與時間。</div>`,
+    dlg => {
+      const name = () => dlg.querySelector('#sg-name').value.trim();
+      const go = async agree => {
+        if (!name()) { alert('請填寫您的姓名'); return; }
+        try {
+          await api(`/changes/${id}/sign`, { method: 'POST', body: { signed_name: name(), agree } });
+          closeDialog();
+          alert(agree ? '已確認，謝謝您。' : '已記錄您的意見，我們會再與您聯絡。');
+          load();
+        } catch (e) { alert(e.message); }
+      };
+      dlg.querySelector('#sg-yes').onclick = () => go(1);
+      dlg.querySelector('#sg-no').onclick = () => go(0);
+      dlg.querySelector('#sg-cancel').onclick = closeDialog;
+    });
+}
+
+function reportDialog() {
+  dialog(`<h3 style="margin:0 0 6px">反映問題</h3>
+    <label>位置</label><input id="r-loc" placeholder="例：主臥">
+    <label>項目</label><input id="r-item" placeholder="例：牆面有裂痕">
+    <label>詳細說明</label><textarea id="r-desc" rows="3"></textarea>
+    <label>您的姓名</label><input id="r-name">
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" id="r-ok">送出</button>
+      <button class="btn sec" id="r-cancel">取消</button>
+    </div>`, dlg => {
+    dlg.querySelector('#r-cancel').onclick = closeDialog;
+    dlg.querySelector('#r-ok').onclick = async () => {
+      const item = dlg.querySelector('#r-item').value.trim();
+      if (!item) { alert('請填寫項目'); return; }
+      try {
+        await api('/defects', { method: 'POST', body: {
+          location: dlg.querySelector('#r-loc').value.trim(), item,
+          description: dlg.querySelector('#r-desc').value.trim(),
+          name: dlg.querySelector('#r-name').value.trim()
+        }});
+        closeDialog();
+        alert('已收到，我們會盡快處理。');
+        load();
+      } catch (e) { alert(e.message); }
+    };
+  });
+}
+
+load();
+window.addEventListener('hashchange', () => location.reload());
+</script>
+</body>
+</html>

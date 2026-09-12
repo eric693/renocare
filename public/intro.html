@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>宅匠 RenoCare — 室內設計／裝修工程營運管理系統</title>
+<meta name="description" content="追加簽認、請款節點、發包估驗、工進連動、缺失保固與專案即時損益。為室內設計公司與裝修工程行設計的營運系統。">
+<meta name="theme-color" content="#1f5f8b">
+<style>
+  :root { --pri:#1f5f8b; --pri-d:#17496b; --pri-l:#e8f1f7; --ok:#1b8a5a; --warn:#b8860b;
+          --danger:#c0392b; --bd:#e2e8ea; --mut:#6b7b83; --bg:#f4f6f8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:#22333b; line-height:1.8; font-size:16px;
+         font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  .hero { background:linear-gradient(160deg,var(--pri-d),var(--pri)); color:#fff; padding:56px 20px 48px; text-align:center; }
+  .hero h1 { margin:0 0 8px; font-size:30px; letter-spacing:1px; }
+  .hero p { margin:0 auto; max-width:640px; opacity:.92; }
+  .hero .btn { display:inline-block; margin-top:22px; background:#fff; color:var(--pri-d);
+               padding:11px 26px; border-radius:8px; text-decoration:none; font-weight:600; }
+  main { max-width:920px; margin:0 auto; padding:28px 16px 70px; }
+  section { background:#fff; border-radius:14px; padding:22px; margin-bottom:18px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  h2 { font-size:20px; color:var(--pri-d); margin:0 0 4px; }
+  h2 + .lead { color:var(--mut); font-size:14.5px; margin:0 0 16px; }
+  .pain { border-left:4px solid var(--danger); background:#fdf6f5; padding:12px 16px; border-radius:0 8px 8px 0; margin-bottom:12px; }
+  .pain b { color:var(--danger); }
+  .fix { border-left:4px solid var(--ok); background:#f2f9f5; padding:12px 16px; border-radius:0 8px 8px 0; }
+  .fix b { color:var(--ok); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px; }
+  .mod { border:1px solid var(--bd); border-radius:10px; padding:14px; }
+  .mod h3 { margin:0 0 4px; font-size:15px; color:var(--pri-d); }
+  .mod p { margin:0; font-size:14px; color:var(--mut); }
+  ul { padding-left:20px; margin:8px 0; }
+  li { margin-bottom:4px; }
+  .kv { display:grid; grid-template-columns:150px 1fr; gap:6px 14px; font-size:14.5px; }
+  .kv dt { color:var(--mut); }
+  .kv dd { margin:0; }
+  footer { text-align:center; color:var(--mut); font-size:13px; padding:0 16px 40px; }
+  a { color:var(--pri); }
+  @media (max-width:520px){ .kv { grid-template-columns:1fr; } .kv dt { font-weight:600; } }
+</style>
+</head>
+<body>
+<div class="hero">
+  <h1>宅匠 RenoCare</h1>
+  <p>室內設計／裝修工程營運管理系統。<br>
+     不是把紙本搬上電腦，是把這個行業實際在虧錢的地方一個一個堵起來。</p>
+  <a class="btn" href="/">進入系統</a>
+</div>
+
+<main>
+<section>
+  <h2>這套系統在解決什麼</h2>
+  <p class="lead">四個地方，是裝修業真正的損失來源。</p>
+
+  <div class="pain"><b>一、追加做了，客戶說沒答應。</b>
+    現場一句「這面牆幫我改一下」，師傅當天就做了；結算時翻 LINE，翻到的也只是一句「好啊」，不是一份有金額的確認。</div>
+  <div class="fix"><b>對策：</b>變更單有簽認鏈，<b>只有業主簽認的金額才會被算進合約總價與應收</b>。
+    業主可以用手機連結線上按確認，系統記下姓名、時間與來源；送出三天沒簽，每天自動催辦。
+    已簽認的單不能改，要調整只能另開減帳單 —— 軌跡連得起來。</div>
+
+  <div class="pain" style="margin-top:18px"><b>二、現金流卡死，不是客戶賴帳，是自己忘記請款。</b>
+    合約寫了「木作進場請款 20%」，木作真的進場那天沒人想起來，一路拖到完工才一起請。</div>
+  <div class="fix"><b>對策：</b>請款節點可以綁工序，那道工序一開工，系統隔天就提醒你開單。
+    應收帳款分三段：可請款未開單（去開單）、已請款未收（去催）、已簽追加未收（最常整筆被忘掉的一段）。</div>
+
+  <div class="pain" style="margin-top:18px"><b>三、付給工班的錢對不起來。</b>
+    工班報「做了七成」，上期報過六成，這期又從頭算一次；保留款扣了多少、什麼時候該退，只有工班記得。</div>
+  <div class="fix"><b>對策：</b>估驗一律填<b>累計完成％</b>，本期金額由系統用累計減前期算出來，重複計價自然被擋掉。
+    保留款、保固保證金分開累計，不能超退；缺失求償可以在估驗時一併扣款，而且鎖住不會扣第二次。</div>
+
+  <div class="pain" style="margin-top:18px"><b>四、做完才知道賺不賺。</b>
+    錢散在估價單、LINE、發票夾與工班請款單之間，算一次要一個下午，所以沒人算。</div>
+  <div class="fix"><b>對策：</b>合約總價（原約＋已簽追加）− 已發包 − 建材 − 雜支，隨時算得出來。
+    成本用「已發包承諾」而不是「已付款」，並拿成交那版估價單的預估成本當基準，
+    直接告訴你<b>超出估價多少</b>、每坪利潤還剩多少。</div>
+</section>
+
+<section>
+  <h2>模組</h2>
+  <p class="lead">權限可以逐一勾選，也可以只給檢視不給修改。</p>
+  <div class="grid">
+    <div class="mod"><h3>營運儀表板</h3><p>在建案場的錢與風險，一頁看完；每一格都可以點進去處理。</p></div>
+    <div class="mod"><h3>案場專案</h3><p>合約、追加、收款、工進、發包、建材、缺失、圖面、許可、損益的全貌。</p></div>
+    <div class="mod"><h3>估價單</h3><p>多版本留存，對客報價與成本並排；成交自動產生合約。</p></div>
+    <div class="mod"><h3>工項單價庫</h3><p>材料與工資、成本與報價分開記，開單直接勾選帶入。</p></div>
+    <div class="mod"><h3>追加減帳</h3><p>簽認鏈、線上簽認、自動催辦、工期展延。</p></div>
+    <div class="mod"><h3>請款與應收</h3><p>節點綁工進、開單請款、逾期帳齡。</p></div>
+    <div class="mod"><h3>工進排程</h3><p>工序相依，改一處後面自動推；缺料的工序直接標示。</p></div>
+    <div class="mod"><h3>發包與估驗</h3><p>累計制估驗、保留款與保固金、缺失求償扣款。</p></div>
+    <div class="mod"><h3>建材訂料</h3><p>交期對上現場需要日，來不及的先看見。</p></div>
+    <div class="mod"><h3>工地日報與照片</h3><p>照片按案場×日期×工序×階段歸檔，爭議時拿得出來。</p></div>
+    <div class="mod"><h3>缺失與保固</h3><p>點交清單追得動，保固到期前主動回訪。</p></div>
+    <div class="mod"><h3>圖面與許可</h3><p>一張圖只有一個現行版本；裝修許可與查驗期限自動提醒。</p></div>
+    <div class="mod"><h3>專案損益</h3><p>逐案毛利、超出估價、每坪利潤。</p></div>
+    <div class="mod"><h3>業主端</h3><p>進度、照片、付款、線上簽認、反映問題；看不到成本。</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>業主端：少接一半的電話</h2>
+  <p class="lead">每個案子一條連結，不需要帳號密碼。</p>
+  <ul>
+    <li>工程進度與逐道工序狀態</li>
+    <li>付款階段、已付與未付金額</li>
+    <li><b>變更單線上簽認</b> —— 看得到逐項明細與金額，填姓名按確認</li>
+    <li>現場照片與施工日誌</li>
+    <li>反映問題，直接進入公司的缺失追蹤清單</li>
+  </ul>
+  <p style="color:var(--mut);font-size:14px">看不到成本、發包金額與工班資料。連結覺得外流就重新產生，舊的立刻失效。</p>
+</section>
+
+<section>
+  <h2>每天系統自己會做的事</h2>
+  <ul>
+    <li>工進到了請款節點 → 轉「可請款」並開待辦</li>
+    <li>已請款逾期未收 → 催收</li>
+    <li>變更單送出三天未簽 → 催簽</li>
+    <li>建材交期晚於現場需要日、或需要日到了還沒下單</li>
+    <li>裝修許可將到期、缺失逾期未改善</li>
+    <li>保固到期前 30 天主動回訪</li>
+    <li>工班完工但保留款還押著 → 辦理退還</li>
+    <li>資料庫每日備份，保留 14 份並另存異地一份</li>
+  </ul>
+</section>
+
+<section>
+  <h2>規格</h2>
+  <dl class="kv">
+    <dt>使用方式</dt><dd>瀏覽器開啟即可；支援手機，可「加到主畫面」像 App 一樣使用</dd>
+    <dt>資料安全</dt><dd>HTTPS、登入失敗鎖定、模組權限與唯讀權限、完整操作紀錄</dd>
+    <dt>資料保存</dt><dd>每日自動備份保留 14 份，另存異地一份</dd>
+    <dt>技術</dt><dd>Node.js + SQLite，前端零框架零外部相依，自架、不綁雲端服務</dd>
+  </dl>
+</section>
+</main>
+
+<footer>宅匠 RenoCare　·　<a href="/">進入系統</a></footer>
+</body>
+</html>
