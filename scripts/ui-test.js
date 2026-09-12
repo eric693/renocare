@@ -109,7 +109,10 @@ function ok(name, cond, extra = '') {
     ['新增廠商', () => win.vendorDialog(null, () => {})],
     ['新增缺失', () => win.defectDialog(pj.id, null, () => {})],
     ['新增變更單', () => win.changeDialog(pj.id, null, () => {})],
-    ['新增發包單', () => win.subDialog(pj.id, null, () => {})]
+    ['新增發包單', () => win.subDialog(pj.id, null, () => {})],
+    ['新增訂料', () => win.materialDialog(pj.id, null, [], () => {})],
+    ['新增保固項目', () => win.warrantyDialog(pj.id, null, () => {})],
+    ['新增申辦案件', () => win.permitDialog(pj.id, null, () => {})]
   ];
   for (const [name, fn] of dlgs) {
     try {
@@ -119,6 +122,60 @@ function ok(name, cond, extra = '') {
       mask && mask.remove();
     } catch (e) { ok(name, false, e.message); }
   }
+
+  // 唯讀的明細對話框沒有表單欄位，另外檢查：要撈得到資料並且畫得出圖表與三張分組表
+  try {
+    await win.costBreakdown(pj.id, pj.name);
+    const mask = win.document.querySelector('.modal-mask');
+    const tables = mask ? mask.querySelectorAll('table').length : 0;
+    ok('成本結構', !!mask && tables >= 3 && !!mask.querySelector('svg'), `表格 ${tables} 張`);
+    mask && mask.remove();
+  } catch (e) { ok('成本結構', false, e.message); }
+
+  console.log('\n匯出與列印');
+  // CSV 的轉義與 BOM 是「Excel 打開會不會變亂碼／欄位會不會跑掉」的唯一保障
+  const csvCell = win.UI.csvCell;
+  ok('CSV 逗號會加引號', csvCell('木作,油漆') === '"木作,油漆"', csvCell('木作,油漆'));
+  ok('CSV 雙引號會加倍', csvCell('說「這"面"牆」') === '"說「這""面""牆」"', csvCell('說「這"面"牆」'));
+  ok('CSV 換行壓成空白', csvCell('第一行\n第二行') === '第一行 第二行', csvCell('第一行\n第二行'));
+  ok('CSV 保住電話開頭的 0', csvCell('0912345678') === '="0912345678"', csvCell('0912345678'));
+  ok('CSV 數字不加工', csvCell(120000) === '120000');
+  ok('CSV 空值是空字串', csvCell(null) === '' && csvCell(undefined) === '');
+  let csvOut = null;
+  win.URL.createObjectURL = b => { csvOut = b; return 'blob:test'; };
+  win.URL.revokeObjectURL = () => {};
+  win.HTMLAnchorElement.prototype.click = function () {};
+  win.UI.csv('測試', [['名稱', r => r.name], ['金額', r => r.amount]],
+    [{ name: '木作工程', amount: 120000 }, { name: '油漆, 批土', amount: 60000 }]);
+  const csvText = csvOut ? await csvOut.text() : '';
+  // Blob.text() 會依規範把 BOM 吃掉，所以要直接看位元組
+  const csvBytes = csvOut ? new Uint8Array(await csvOut.arrayBuffer()) : new Uint8Array();
+  ok('CSV 開頭有 BOM（Excel 才不會亂碼）',
+    csvBytes[0] === 0xEF && csvBytes[1] === 0xBB && csvBytes[2] === 0xBF,
+    [...csvBytes.slice(0, 3)].join(','));
+  ok('CSV 有表頭與兩列資料', csvText.trim().split('\r\n').length === 3, JSON.stringify(csvText));
+  ok('CSV 內容正確', csvText.includes('木作工程,120000') && csvText.includes('"油漆, 批土",60000'));
+
+  // 列印是另開視窗寫 HTML，測的是「該出現的都出現、成本不會漏到紙上」
+  let printed = '';
+  win.open = () => ({
+    document: { write(h) { printed += h; }, close() {} }, focus() {}
+  });
+  const quotes = await (await win.fetch('/api/quotes')).json();
+  if (quotes.length) {
+    await App.go('quotes?id=' + quotes[0].id);
+    const pb = win.document.querySelector('#q-print');
+    if (pb) {
+      pb.click();
+      ok('報價單印出標題與簽名欄', printed.includes('報價單') && printed.includes('業主簽章'));
+      // 這張紙會交到客戶手上，成本欄漏印出去就是把底價送給對方
+      ok('報價單紙上沒有成本與毛利欄',
+        !printed.includes('成本單價') && !printed.includes('預估毛利') && !printed.includes('預估成本'));
+      const q0 = await (await win.fetch('/api/quotes/' + quotes[0].id)).json();
+      ok('報價單有印出每一項工項', q0.items.every(i => printed.includes(UI.esc(i.name))),
+        `${q0.items.length} 項`);
+    } else ok('報價單列印', false, '找不到列印按鈕');
+  } else ok('報價單列印', true, '（沒有估價單，跳過）');
 
   console.log('\n業主端');
   const tokenRow = projects.find(p => p.client_token) ||

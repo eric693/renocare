@@ -19,7 +19,7 @@ App.page('vendors', {
     el.appendChild(bar);
     const act = document.createElement('div');
     act.className = 'actions';
-    act.innerHTML = '<button class="btn" id="add">新增廠商</button>';
+    act.innerHTML = '<button class="btn" id="add">新增廠商</button>' + UI.csvBtn('vendors');
     el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
@@ -41,6 +41,15 @@ App.page('vendors', {
         <td class="nowrap"><button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
           <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td>
       </tr>`), '還沒有廠商資料');
+      UI.bindCsv(act, 'vendors', '工班與廠商', [
+        ['名稱', r => r.name], ['類型', r => twText(TW.vendor_kind, r.kind)], ['工種', r => r.trade],
+        ['聯絡人', r => r.contact], ['電話', r => r.phone], ['統一編號', r => r.tax_id],
+        ['匯款帳戶', r => r.bank_info], ['評價', r => r.rating],
+        ['責任險到期', r => r.liability_expiry], ['責任險已過期', r => r.insurance_expired ? '是' : ''],
+        ['勞保', r => r.labor_insured ? '已投保' : '未投保'],
+        ['承接張數', r => r.job_count], ['承接金額', r => r.job_amount],
+        ['在手缺失', r => r.open_defects], ['狀態', r => r.active ? '啟用' : '停用'], ['備註', r => r.note]
+      ], rows);
       box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
         vendorDialog(rows.find(x => String(x.id) === b.dataset.edit), load));
       box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
@@ -89,23 +98,39 @@ App.page('materials', {
     notes: ['「有風險」只列兩種：廠商交期晚於現場需要日、需要日到了還沒下單。']
   },
   async render(el) {
-    const state = { project_id: '', status: '', risk: '' };
+    const state = { project_id: '', status: '', risk: '', q: '' };
     const bar = App.filterBar([
       { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) },
       { name: 'status', label: '狀態', type: 'select', options: [['', '全部']].concat(twOpts(TW.material_status)) },
-      { name: 'risk', label: '只看有風險的', type: 'select', options: [['', '否'], ['1', '是']] }
+      { name: 'risk', label: '只看有風險的', type: 'select', options: [['', '否'], ['1', '是']] },
+      { name: 'q', label: '搜尋', placeholder: '品項／規格／廠商／案場' }
     ], v => { Object.assign(state, v); load(); });
     el.innerHTML = '';
     el.appendChild(bar);
+    const act = document.createElement('div');
+    act.className = 'actions';
+    act.innerHTML = '<button class="btn" id="add">新增訂料</button>' + UI.csvBtn('materials');
+    el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
+
+    // 訂料要綁工序，而工序是跟著案子的 —— 開對話框前先把那個案子的工序撈回來
+    const openDialog = async (pid, row) => {
+      const schedule = await GET('/schedule?project_id=' + pid).catch(() => []);
+      materialDialog(pid, row, schedule, load);
+    };
+    act.querySelector('#add').onclick = async () => {
+      const pid = state.project_id || App.lastProject();
+      if (!pid) { UI.toast('請先在上方選擇案場', true); return; }
+      try { await openDialog(pid, null); } catch (e) { UI.err(e); }
+    };
 
     const load = async () => {
       const rows = await GET('/materials' + App.qs(state));
       const risky = rows.filter(r => r.late_days > 0 || r.not_ordered);
       box.innerHTML = `
         ${risky.length ? `<div class="notice warn">有 ${risky.length} 項料會影響工進：交期晚於現場需要日，或需要日到了還沒下單。</div>` : ''}
-        ${UI.table(['案場', '品項', '廠商', '對應工序', '現場需要', '交期／到貨', '金額', '狀態'], rows.map(r => `<tr>
+        ${UI.table(['案場', '品項', '廠商', '對應工序', '現場需要', '交期／到貨', '金額', '狀態', ''], rows.map(r => `<tr>
           <td>${UI.esc(r.project_name)}<div class="muted">${UI.esc(r.project_code)}</div></td>
           <td><strong>${UI.esc(r.name)}</strong><div class="muted">${UI.esc(r.spec || '')}</div></td>
           <td>${UI.esc(r.vendor_name || '—')}</td>
@@ -117,7 +142,27 @@ App.page('materials', {
           <td class="num">${UI.fmtMoney(r.amount)}</td>
           <td>${UI.tag(twText(TW.material_status, r.status),
         r.status === 'arrived' || r.status === 'installed' ? 'ok' : r.late_days ? 'danger' : '')}</td>
+          <td class="nowrap"><button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
+            <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td>
         </tr>`), '沒有訂料資料')}`;
+      UI.bindCsv(act, 'materials', '建材訂料', [
+        ['案場', r => r.project_name], ['案場代號', r => r.project_code],
+        ['品項', r => r.name], ['規格', r => r.spec], ['廠商', r => r.vendor_name],
+        ['對應工序', r => r.schedule_name], ['數量', r => r.qty], ['單位', r => r.unit],
+        ['單價', r => r.unit_price], ['金額', r => r.amount],
+        ['現場需要日', r => r.need_date], ['下單日', r => r.order_date],
+        ['回覆交期', r => r.eta_date], ['到貨日', r => r.arrived_date],
+        ['晚幾天', r => r.late_days || ''], ['還沒下單', r => r.not_ordered ? '是' : ''],
+        ['狀態', r => twText(TW.material_status, r.status)], ['備註', r => r.note]
+      ], rows);
+      box.querySelectorAll('[data-edit]').forEach(b => b.onclick = async () => {
+        const r = rows.find(x => String(x.id) === b.dataset.edit);
+        try { await openDialog(r.project_id, r); } catch (e) { UI.err(e); }
+      });
+      box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+        if (!await UI.confirm('確定刪除這筆訂料？')) return;
+        try { await DEL('/materials/' + b.dataset.del); load(); } catch (e) { UI.err(e); }
+      });
     };
     await load();
   }
@@ -132,18 +177,19 @@ App.page('defects', {
     notes: ['勾了「向工班求償」的缺失，估驗計價時可以直接勾選一併扣款，而且不會被扣第二次。']
   },
   async render(el) {
-    const state = { project_id: '', status: '', vendor_id: '', source: '' };
+    const state = { project_id: '', status: '', vendor_id: '', source: '', q: '' };
     const bar = App.filterBar([
       { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) },
       { name: 'status', label: '狀態', type: 'select', options: [['', '全部']].concat(twOpts(TW.defect_status)) },
       { name: 'source', label: '來源', type: 'select', options: [['', '全部']].concat(twOpts(TW.defect_source)) },
-      { name: 'vendor_id', label: '責任工班', type: 'select', options: App.vendorOptions(true) }
+      { name: 'vendor_id', label: '責任工班', type: 'select', options: App.vendorOptions(true) },
+      { name: 'q', label: '搜尋', placeholder: '單號／位置／項目／描述' }
     ], v => { Object.assign(state, v); load(); });
     el.innerHTML = '';
     el.appendChild(bar);
     const act = document.createElement('div');
     act.className = 'actions';
-    act.innerHTML = '<button class="btn" id="add">新增缺失</button>';
+    act.innerHTML = '<button class="btn" id="add">新增缺失</button>' + UI.csvBtn('defects');
     el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
@@ -170,11 +216,27 @@ App.page('defects', {
         r.status === 'verified' ? 'ok' : r.status === 'open' ? 'danger' : 'warn')}</td>
           <td class="num">${r.charge_vendor ? UI.fmtMoney(r.cost) : '—'}
             ${r.deducted_valuation_id ? '<div class="muted">已扣回</div>' : ''}</td>
-          <td class="nowrap"><button class="btn tiny secondary" data-edit="${r.id}">編輯</button></td>
+          <td class="nowrap"><button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
+            <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td>
         </tr>`), '目前沒有缺失')}`;
+      UI.bindCsv(act, 'defects', '缺失清單', [
+        ['單號', r => r.no], ['案場', r => r.project_name], ['案場代號', r => r.project_code],
+        ['位置', r => r.location], ['項目', r => r.item], ['說明', r => r.description],
+        ['來源', r => twText(TW.defect_source, r.source)], ['嚴重度', r => twText(TW.severity, r.severity)],
+        ['責任工班', r => r.vendor_name], ['負責人', r => r.owner_name],
+        ['發現日', r => r.found_date], ['要求改善日', r => r.due_date],
+        ['完成日', r => r.fixed_date], ['複驗日', r => r.verified_date],
+        ['逾期', r => r.overdue ? '是' : ''], ['狀態', r => twText(TW.defect_status, r.status)],
+        ['求償金額', r => r.charge_vendor ? r.cost : ''],
+        ['已於估驗扣回', r => r.deducted_valuation_id ? '是' : ''], ['備註', r => r.note]
+      ], rows);
       box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
         const r = rows.find(x => String(x.id) === b.dataset.edit);
         defectDialog(r.project_id, r, load);
+      });
+      box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+        if (!await UI.confirm('確定刪除這筆缺失？已經扣回工班款的缺失不能刪。')) return;
+        try { await DEL('/defects/' + b.dataset.del); load(); } catch (e) { UI.err(e); }
       });
     };
     act.querySelector('#add').onclick = () => {
@@ -191,14 +253,26 @@ App.page('warranty', {
   sub: '到期前主動回訪一次：現在修是服務，過期再修是爭議',
   module: 'warranty',
   async render(el) {
-    const state = { project_id: '' };
+    const state = { project_id: '', status: '', q: '' };
     const bar = App.filterBar([
-      { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) }
+      { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) },
+      { name: 'status', label: '保固狀態', type: 'select',
+        options: [['', '全部'], ['valid', '保固中'], ['soon', '60 天內到期'], ['expired', '已到期']] },
+      { name: 'q', label: '搜尋', placeholder: '保固項目／案場／業主／工班' }
     ], v => { Object.assign(state, v); load(); });
     el.innerHTML = '';
     el.appendChild(bar);
+    const act = document.createElement('div');
+    act.className = 'actions';
+    act.innerHTML = '<button class="btn" id="add">新增保固項目</button>' + UI.csvBtn('warranty');
+    el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
+    act.querySelector('#add').onclick = () => {
+      const pid = state.project_id || App.lastProject();
+      if (!pid) { UI.toast('請先在上方選擇案場', true); return; }
+      warrantyDialog(pid, null, load);
+    };
 
     const load = async () => {
       const rows = await GET('/warranties' + App.qs(state));
@@ -214,8 +288,25 @@ App.page('warranty', {
           <td class="nowrap">${UI.date(r.end_date)}</td>
           <td class="num ${r.expired ? 'muted' : r.days_left <= 60 ? 'warn' : ''}">
             ${r.expired ? '已到期' : r.days_left === null ? '—' : r.days_left + ' 天'}</td>
-          <td><button class="btn tiny" data-rep="${r.id}">報修</button></td>
+          <td class="nowrap"><button class="btn tiny" data-rep="${r.id}">報修</button>
+            <button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
+            <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td>
         </tr>`), '還沒有保固資料')}`;
+      UI.bindCsv(act, 'warranty', '保固清單', [
+        ['案場', r => r.project_name], ['案場代號', r => r.project_code],
+        ['業主', r => r.customer_name], ['業主電話', r => r.customer_phone],
+        ['保固項目', r => r.item], ['負責工班', r => r.vendor_name],
+        ['起算日', r => r.start_date], ['月數', r => r.months], ['到期日', r => r.end_date],
+        ['剩餘天數', r => r.expired ? '已到期' : r.days_left], ['備註', r => r.note]
+      ], rows);
+      box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+        const w = rows.find(x => String(x.id) === b.dataset.edit);
+        warrantyDialog(w.project_id, w, load);
+      });
+      box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+        if (!await UI.confirm('確定刪除這項保固？')) return;
+        try { await DEL('/warranties/' + b.dataset.del); load(); } catch (e) { UI.err(e); }
+      });
       box.querySelectorAll('[data-rep]').forEach(b => b.onclick = () => {
         const w = rows.find(x => String(x.id) === b.dataset.rep);
         UI.modal({
@@ -244,19 +335,29 @@ App.page('permits', {
     intro: '室內裝修審查許可有有效期限，逾期未完成竣工查驗可能被要求停工或處分。到期前七天系統會自動開待辦。'
   },
   async render(el) {
-    const state = { project_id: '', status: '' };
+    const state = { project_id: '', status: '', q: '' };
     const bar = App.filterBar([
       { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) },
-      { name: 'status', label: '狀態', type: 'select', options: [['', '全部']].concat(twOpts(TW.permit_status)) }
+      { name: 'status', label: '狀態', type: 'select', options: [['', '全部']].concat(twOpts(TW.permit_status)) },
+      { name: 'q', label: '搜尋', placeholder: '項目／機關／文號／案場' }
     ], v => { Object.assign(state, v); load(); });
     el.innerHTML = '';
     el.appendChild(bar);
+    const act = document.createElement('div');
+    act.className = 'actions';
+    act.innerHTML = '<button class="btn" id="add">新增申辦案件</button>' + UI.csvBtn('permits');
+    el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
+    act.querySelector('#add').onclick = () => {
+      const pid = state.project_id || App.lastProject();
+      if (!pid) { UI.toast('請先在上方選擇案場', true); return; }
+      permitDialog(pid, null, load);
+    };
 
     const load = async () => {
       const rows = await GET('/permits' + App.qs(state));
-      box.innerHTML = UI.table(['案場', '項目', '主管機關', '文號', '申請／核准', '有效期限', '剩餘', '狀態', '承辦'],
+      box.innerHTML = UI.table(['案場', '項目', '主管機關', '文號', '申請／核准', '有效期限', '剩餘', '狀態', '承辦', ''],
         rows.map(r => `<tr>
         <td>${UI.esc(r.project_name)}<div class="muted">${UI.esc(r.project_code)}</div></td>
         <td>${UI.esc(r.kind)}</td><td>${UI.esc(r.agency || '—')}</td>
@@ -267,7 +368,24 @@ App.page('permits', {
           ${r.days_left === null ? '—' : r.expired ? '已逾期' : r.days_left + ' 天'}</td>
         <td>${UI.tag(twText(TW.permit_status, r.status), r.status === 'approved' ? 'ok' : r.status === 'todo' ? 'warn' : '')}</td>
         <td>${UI.esc(r.owner_name || '—')}</td>
+        <td class="nowrap"><button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
+          <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td>
       </tr>`), '還沒有申辦案件');
+      UI.bindCsv(act, 'permits', '許可與法規', [
+        ['案場', r => r.project_name], ['案場代號', r => r.project_code],
+        ['申辦項目', r => r.kind], ['主管機關', r => r.agency], ['文號', r => r.doc_no],
+        ['申請日', r => r.applied_date], ['核准日', r => r.approved_date],
+        ['有效期限', r => r.expiry_date], ['剩餘天數', r => r.expired ? '已逾期' : r.days_left],
+        ['狀態', r => twText(TW.permit_status, r.status)], ['承辦', r => r.owner_name], ['備註', r => r.note]
+      ], rows);
+      box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+        const r = rows.find(x => String(x.id) === b.dataset.edit);
+        permitDialog(r.project_id, r, load);
+      });
+      box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+        if (!await UI.confirm('確定刪除這筆申辦案件？')) return;
+        try { await DEL('/permits/' + b.dataset.del); load(); } catch (e) { UI.err(e); }
+      });
     };
     await load();
   }

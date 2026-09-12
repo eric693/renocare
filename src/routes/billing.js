@@ -134,11 +134,14 @@ function syncMilestonePaid(milestoneId) {
 
 router.get('/receivables', requireStaff('billing'), (req, res) => {
   const t = today();
+  const { status = '', bucket = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   const rows = [];
   const projects = db.prepare(`SELECT p.*, c.name AS customer_name, c.phone AS customer_phone, u.name AS designer_name
     FROM projects p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN users u ON u.id = p.designer_id
-    WHERE p.status NOT IN ('lost')`).all();
-  let sum = { ready: 0, invoiced: 0, overdue: 0, change_unbilled: 0, received: 0, contract_total: 0 };
+    WHERE p.status NOT IN ('lost') AND (? = '' OR p.status = ?)
+      AND (? = '' OR p.name LIKE ? OR p.code LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)`)
+    .all(status, status, kw, like, like, like, like);
 
   for (const p of projects) {
     const m = projectMoney(p.id);
@@ -157,11 +160,23 @@ router.get('/receivables', requireStaff('billing'), (req, res) => {
       oldest_due: oldest,
       age_days: oldest ? Math.round((new Date(t) - new Date(oldest)) / 86400000) : 0
     });
-    sum.ready += ready; sum.invoiced += invoicedOpen; sum.overdue += m.overdue;
-    sum.change_unbilled += changeUnbilled; sum.received += m.received; sum.contract_total += m.contract_total;
   }
-  rows.sort((a, b) => b.overdue - a.overdue || b.ready - a.ready);
-  res.json({ rows, sum });
+  // 三段分別對應三件不同的事，所以可以只看其中一段；合計跟著篩選後的清單走，
+  // 不然「看到的列」跟「上面的數字」對不起來，比沒有合計更糟。
+  const buckets = {
+    ready: r => r.ready > 0,
+    invoiced: r => r.invoiced_open > 0,
+    overdue: r => r.overdue > 0,
+    change: r => r.change_unbilled > 0
+  };
+  const shown = buckets[bucket] ? rows.filter(buckets[bucket]) : rows;
+  shown.sort((a, b) => b.overdue - a.overdue || b.ready - a.ready);
+  const sum = shown.reduce((a, r) => ({
+    ready: a.ready + r.ready, invoiced: a.invoiced + r.invoiced_open, overdue: a.overdue + r.overdue,
+    change_unbilled: a.change_unbilled + r.change_unbilled, received: a.received + r.received,
+    contract_total: a.contract_total + r.contract_total
+  }), { ready: 0, invoiced: 0, overdue: 0, change_unbilled: 0, received: 0, contract_total: 0 });
+  res.json({ rows: shown, sum });
 });
 
 module.exports = router;

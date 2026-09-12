@@ -68,11 +68,13 @@ function recalcQuote(quoteId) {
 }
 
 router.get('/quotes', requireStaff('quotes'), (req, res) => {
-  const { project_id = '', status = '' } = req.query;
+  const { project_id = '', status = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   res.json(db.prepare(`SELECT q.*, p.name AS project_name, p.code AS project_code, u.name AS created_by_name
     FROM quotes q JOIN projects p ON p.id = q.project_id LEFT JOIN users u ON u.id = q.created_by
     WHERE (? = '' OR q.project_id = ?) AND (? = '' OR q.status = ?)
-    ORDER BY q.id DESC`).all(project_id, project_id, status, status));
+      AND (? = '' OR q.quote_no LIKE ? OR q.note LIKE ? OR p.name LIKE ? OR p.code LIKE ?)
+    ORDER BY q.id DESC`).all(project_id, project_id, status, status, kw, like, like, like, like));
 });
 
 router.get('/quotes/:id', requireStaff('quotes'), (req, res) => {

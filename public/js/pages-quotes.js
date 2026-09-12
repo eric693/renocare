@@ -15,16 +15,17 @@ App.page('quotes', {
   async render(el) {
     const id = App.pageQuery.get('id');
     if (id) return renderQuote(el, Number(id));
-    const state = { project_id: '', status: '' };
+    const state = { project_id: '', status: '', q: '' };
     const bar = App.filterBar([
       { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) },
-      { name: 'status', label: '狀態', type: 'select', options: [['', '全部']].concat(twOpts(TW.quote_status)) }
+      { name: 'status', label: '狀態', type: 'select', options: [['', '全部']].concat(twOpts(TW.quote_status)) },
+      { name: 'q', label: '搜尋', placeholder: '單號／備註／案場' }
     ], v => { Object.assign(state, v); load(); });
     el.innerHTML = '';
     el.appendChild(bar);
     const act = document.createElement('div');
     act.className = 'actions';
-    act.innerHTML = '<button class="btn" id="add">新增估價單</button>';
+    act.innerHTML = '<button class="btn" id="add">新增估價單</button>' + UI.csvBtn('quotes');
     el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
@@ -47,6 +48,17 @@ App.page('quotes', {
             r.status === 'accepted' ? 'ok' : r.status === 'rejected' ? 'danger' : r.status === 'sent' ? 'warn' : '')}</td>
         </tr>`;
         }), '還沒有估價單');
+      UI.bindCsv(act, 'quotes', '估價單清單', [
+        ['單號', r => r.quote_no], ['版本', r => r.version], ['類型', r => twText(TW.quote_kind, r.kind)],
+        ['案場', r => r.project_name], ['案場代號', r => r.project_code],
+        ['報價日', r => r.quote_date], ['有效至', r => r.valid_until],
+        ['小計', r => r.subtotal], ['折讓', r => r.discount],
+        ['稅別', r => twText(TW.tax_type, r.tax_type)], ['稅額', r => r.tax_amount],
+        ['報價總額', r => r.total], ['預估成本', r => r.cost_total],
+        ['預估毛利', r => r.total - r.cost_total],
+        ['毛利率%', r => r.total ? Math.round((r.total - r.cost_total) / r.total * 1000) / 10 : 0],
+        ['狀態', r => twText(TW.quote_status, r.status)], ['建立人', r => r.created_by_name]
+      ], () => rows);
     };
     act.querySelector('#add').onclick = () => quoteDialog(null, null);
     await load();
@@ -85,6 +97,8 @@ async function renderQuote(el, id) {
           <div class="muted">${UI.esc(q.project_name)}（${UI.esc(q.project_code)}）　業主 ${UI.esc(q.customer_name || '—')}
             ${q.area_ping ? `　${q.area_ping} 坪` : ''}</div></div>
         <div class="detail-actions">
+          <button class="btn small" id="q-print">列印報價單</button>
+          <button class="btn small secondary" id="q-csv">匯出明細</button>
           <button class="btn small secondary" id="q-copy">開新版本</button>
           ${locked ? '' : `<button class="btn small secondary" id="q-edit">編輯單頭</button>
           <button class="btn small" id="q-send">標為已送出</button>
@@ -126,6 +140,39 @@ async function renderQuote(el, id) {
   const reload = () => renderQuote(el, id);
   const q$ = s => el.querySelector(s);
   q$('#q-copy').onclick = () => quoteDialog(q.project_id, q.id);
+
+  // 報價單是要交到客戶手上的文件：紙上不出現成本與毛利，只出現對客單價。
+  q$('#q-print').onclick = () => UI.print(`報價單　${q.quote_no}（v${q.version}）`, `
+    <div class="kv">
+      <div><b>業主</b>${UI.esc(q.customer_name || '')}</div>
+      <div><b>報價日</b>${UI.esc(q.quote_date || '')}</div>
+      <div><b>工程地點</b>${UI.esc(q.address || q.project_name || '')}</div>
+      <div><b>有效期限</b>${UI.esc(q.valid_until || '—')}</div>
+      <div><b>案場</b>${UI.esc(q.project_name)}（${UI.esc(q.project_code)}）</div>
+      <div><b>室內坪數</b>${q.area_ping ? q.area_ping + ' 坪' : '—'}</div>
+      <div><b>報價類型</b>${UI.esc(twText(TW.quote_kind, q.kind))}</div>
+      <div><b>稅別</b>${UI.esc(twText(TW.tax_type, q.tax_type))}</div>
+    </div>
+    <h2>工程項目</h2>
+    ${UI.ptable(['#', '工項', '規格', '單位', '#數量', '#單價', '#金額'],
+      q.items.map((i, n) => [n + 1, UI.esc(i.name) + (i.category ? `<div class="muted">${UI.esc(i.category)}</div>` : ''),
+        UI.esc(i.spec || ''), UI.esc(i.unit), i.qty,
+        UI.fmtMoney(i.unit_price), UI.fmtMoney(i.amount)]))}
+    <div class="total">小計　${UI.fmtMoney(q.subtotal)}</div>
+    ${q.discount ? `<div class="total">折讓　− ${UI.fmtMoney(q.discount)}</div>` : ''}
+    ${q.tax_amount ? `<div class="total">稅額（5%）　${UI.fmtMoney(q.tax_amount)}</div>` : ''}
+    <div class="total">報價總額　${UI.fmtMoney(q.total)}</div>
+    ${q.area_ping ? `<div class="muted" style="text-align:right">每坪 ${UI.fmtMoney(Math.round(q.total / q.area_ping))}</div>` : ''}
+    ${q.note ? `<h2>備註</h2><div class="note">${UI.esc(q.note)}</div>` : ''}
+    <h2>確認</h2>
+    <div class="note muted">施工期間如需變更或追加項目，將另開變更單，經雙方簽認後方施作與計價。</div>
+    <div class="sign"><div>業主簽章／日期</div><div>本公司代表／日期</div></div>`);
+
+  q$('#q-csv').onclick = () => UI.csv(`報價明細-${q.quote_no}`, [
+    ['項次', r => r._n], ['工項', r => r.name], ['類別', r => r.category], ['規格', r => r.spec],
+    ['單位', r => r.unit], ['數量', r => r.qty], ['對客單價', r => r.unit_price], ['金額', r => r.amount],
+    ['成本單價', r => r.unit_cost], ['成本', r => r.cost_amount], ['毛利', r => r.amount - r.cost_amount]
+  ], q.items.map((i, n) => ({ ...i, _n: n + 1 })));
   if (!locked) {
     q$('#q-edit').onclick = () => UI.modal({
       title: '編輯估價單',
@@ -222,7 +269,7 @@ App.page('unitprices', {
     el.appendChild(bar);
     const act = document.createElement('div');
     act.className = 'actions';
-    act.innerHTML = '<button class="btn" id="add">新增工項</button>';
+    act.innerHTML = '<button class="btn" id="add">新增工項</button>' + UI.csvBtn('unitprices');
     el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
@@ -245,6 +292,18 @@ App.page('unitprices', {
           <td class="nowrap"><button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
             <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td></tr>`;
         }), '還沒有工項');
+      UI.bindCsv(act, 'unitprices', '工項單價庫', [
+        ['類別', r => r.category], ['工項', r => r.name], ['規格', r => r.spec], ['單位', r => r.unit],
+        ['材料成本', r => r.material_cost], ['工資成本', r => r.labor_cost],
+        ['成本合計', r => r.material_cost + r.labor_cost],
+        ['報價（材料）', r => r.material_price], ['報價（工資）', r => r.labor_price],
+        ['報價合計', r => r.material_price + r.labor_price],
+        ['毛利率%', r => {
+          const c = r.material_cost + r.labor_cost, p = r.material_price + r.labor_price;
+          return p ? Math.round((p - c) / p * 1000) / 10 : 0;
+        }],
+        ['狀態', r => r.active ? '啟用' : '停用'], ['備註', r => r.note]
+      ], () => rows);
       box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
         unitDialog(rows.find(x => String(x.id) === b.dataset.edit), load));
       box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {

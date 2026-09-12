@@ -268,7 +268,95 @@ const UI = {
   },
   // 日期是空字串時不要印出空白欄位，看不出是「沒填」還是「壞掉」
   date(d) { return d ? UI.esc(d) : '<span class="muted">—</span>'; },
-  moneyClass(n) { return Number(n) < 0 ? 'danger' : ''; }
+  moneyClass(n) { return Number(n) < 0 ? 'danger' : ''; },
+
+  // ---- 匯出 CSV ----
+  // 對帳、報稅、給會計都要 Excel。資料已經在前端了，所以直接在瀏覽器產檔：
+  // 不必為每張報表再寫一支後端匯出，而且權限天然跟畫面一致 —— 看得到才匯得出。
+  csvCell(v) {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number') return String(v);
+    const s = String(v).replace(/\r?\n/g, ' ').trim();
+    // 電話與統編開頭的 0 會被 Excel 當成數字吃掉，用公式形式保住它
+    if (/^0\d+$/.test(s) || /^\d{10,}$/.test(s)) return `="${s}"`;
+    return /[",;\t]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  },
+  csv(name, columns, rows) {
+    if (!rows.length) { UI.toast('目前沒有資料可以匯出', true); return; }
+    const lines = [columns.map(c => UI.csvCell(c[0])).join(',')];
+    for (const r of rows) lines.push(columns.map(c => UI.csvCell(c[1](r))).join(','));
+    // BOM 一定要加：沒有它，Excel 會把繁體中文開成亂碼
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name}-${UI.today()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    UI.toast(`已匯出 ${rows.length} 筆`);
+  },
+  // 每張清單的按鈕長得一樣，避免各頁各寫一顆
+  csvBtn(id, label = '匯出 CSV') {
+    return `<button class="btn small secondary" data-csv="${UI.esc(id)}">${UI.esc(label)}</button>`;
+  },
+  bindCsv(root, id, name, columns, rows) {
+    const b = root.querySelector(`[data-csv="${id}"]`);
+    if (b) b.onclick = () => UI.csv(name, columns, typeof rows === 'function' ? rows() : rows);
+  },
+
+  // ---- 列印 ----
+  // 報價單要給客戶、變更單要紙本回簽、請款單要附發票寄出去 —— 這些是實體文件，
+  // 不是畫面。所以另開一個乾淨的視窗自己排版，不去動系統畫面的樣式。
+  print(title, bodyHtml) {
+    const w = window.open('', '_blank', 'width=900,height=700');
+    if (!w) { UI.toast('瀏覽器擋掉了列印視窗，請允許彈出視窗', true); return; }
+    const company = (window.App && App.me && App.me.company_name) || '';
+    w.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+      <title>${UI.esc(title)}</title>
+      <style>
+        @page { size: A4; margin: 14mm; }
+        * { box-sizing: border-box; }
+        body { font: 13px/1.7 "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; color: #111; margin: 0; }
+        h1 { font-size: 20px; margin: 0 0 2px; }
+        h2 { font-size: 15px; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #ccc; }
+        .doc-head { display: flex; justify-content: space-between; align-items: flex-end;
+          border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 16px; }
+        .doc-head .co { font-size: 15px; font-weight: 700; }
+        .muted { color: #666; }
+        table { width: 100%; border-collapse: collapse; margin: 6px 0 14px; }
+        th, td { border: 1px solid #bbb; padding: 6px 8px; text-align: left; vertical-align: top; }
+        th { background: #f2f2f2; font-weight: 600; }
+        td.num, th.num { text-align: right; white-space: nowrap; }
+        .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 24px; margin-bottom: 8px; }
+        .kv div { border-bottom: 1px dotted #ddd; padding: 3px 0; }
+        .kv b { display: inline-block; min-width: 6em; color: #555; font-weight: 500; }
+        .total { text-align: right; font-size: 15px; font-weight: 700; margin-top: 6px; }
+        .note { white-space: pre-wrap; }
+        /* 簽名欄一定要留在紙上，線上簽認的案子也常常要附一份紙本歸檔 */
+        .sign { margin-top: 34px; display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+        .sign div { border-top: 1px solid #111; padding-top: 6px; }
+        .foot { margin-top: 26px; font-size: 11px; color: #888; }
+        @media print { .noprint { display: none; } }
+      </style></head><body>
+      <div class="doc-head"><div><div class="co">${UI.esc(company)}</div>
+        <h1>${UI.esc(title)}</h1></div>
+        <div class="muted">列印日期 ${UI.esc(UI.today())}</div></div>
+      ${bodyHtml}
+      <div class="foot">本文件由 ${UI.esc(company)} 營運系統產生。</div>
+      <div class="noprint" style="margin-top:18px;text-align:center">
+        <button onclick="window.print()" style="padding:8px 20px;font-size:14px">列印</button></div>
+      </body></html>`);
+    w.document.close();
+    w.focus();
+  },
+  // 列印用表格：跟畫面上的 UI.table 分開，因為紙上不需要標籤、顏色與操作欄
+  ptable(headers, rows) {
+    return `<table><thead><tr>${headers.map(h =>
+      `<th${String(h).startsWith('#') ? ' class="num"' : ''}>${UI.esc(String(h).replace(/^#/, ''))}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(cells => `<tr>${cells.map((c, i) =>
+        `<td${String(headers[i]).startsWith('#') ? ' class="num"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  }
 };
 
 // 中文對照：狀態碼只在資料庫裡是英文，畫面上永遠是中文

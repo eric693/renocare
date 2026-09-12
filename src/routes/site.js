@@ -123,13 +123,16 @@ function materialRow(b) {
 }
 
 router.get('/materials', requireStaff('materials'), (req, res) => {
-  const { project_id = '', status = '', risk = '' } = req.query;
+  const { project_id = '', status = '', risk = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   const rows = db.prepare(`SELECT m.*, v.name AS vendor_name, p.name AS project_name, p.code AS project_code,
       si.name AS schedule_name, si.planned_start AS schedule_start
     FROM material_orders m JOIN projects p ON p.id = m.project_id
     LEFT JOIN vendors v ON v.id = m.vendor_id LEFT JOIN schedule_items si ON si.id = m.schedule_item_id
     WHERE (? = '' OR m.project_id = ?) AND (? = '' OR m.status = ?)
-    ORDER BY m.need_date, m.id`).all(project_id, project_id, status, status);
+      AND (? = '' OR m.name LIKE ? OR m.spec LIKE ? OR v.name LIKE ? OR p.name LIKE ? OR p.code LIKE ?)
+    ORDER BY m.need_date, m.id`)
+    .all(project_id, project_id, status, status, kw, like, like, like, like, like);
   const t = today();
   for (const r of rows) {
     // 會不會來不及：有交期就比交期，沒交期又還沒下單就看現場需要日

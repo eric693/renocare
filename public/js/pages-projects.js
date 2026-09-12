@@ -12,7 +12,7 @@ App.page('customers', {
     el.appendChild(bar);
     const act = document.createElement('div');
     act.className = 'actions';
-    act.innerHTML = '<button class="btn" id="add">新增客戶</button>';
+    act.innerHTML = '<button class="btn" id="add">新增客戶</button>' + UI.csvBtn('customers');
     el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
@@ -28,6 +28,11 @@ App.page('customers', {
         <td class="nowrap"><button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
           <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td>
       </tr>`), '還沒有客戶資料');
+      UI.bindCsv(act, 'customers', '客戶名單', [
+        ['客戶', r => r.name], ['電話', r => r.phone], ['Email', r => r.email],
+        ['統一編號', r => r.tax_id], ['地址', r => r.address], ['來源', r => r.source],
+        ['承接案數', r => r.project_count], ['累計合約金額', r => r.contract_amount], ['備註', r => r.note]
+      ], rows);
       box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
         customerDialog(rows.find(x => String(x.id) === b.dataset.edit), load));
       box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
@@ -90,7 +95,7 @@ App.page('projects', {
     el.appendChild(bar);
     const act = document.createElement('div');
     act.className = 'actions';
-    act.innerHTML = '<button class="btn" id="add">新增案場</button>';
+    act.innerHTML = '<button class="btn" id="add">新增案場</button>' + UI.csvBtn('projects');
     el.appendChild(act);
     const box = document.createElement('div');
     el.appendChild(box);
@@ -111,6 +116,17 @@ App.page('projects', {
         <td class="num ${r.gross_profit < 0 ? 'danger' : ''}">${r.margin}%</td>
         <td>${r.delay_days ? UI.tag(`逾期 ${r.delay_days} 天`, 'danger') : UI.date(r.due_date)}</td>
       </tr>`), '還沒有案場');
+      UI.bindCsv(act, 'projects', '案場清單', [
+        ['代號', r => r.code], ['案場', r => r.name], ['客戶', r => r.customer_name],
+        ['設計師', r => r.designer_name], ['狀態', r => twText(TW.project_status, r.status)],
+        ['類型', r => r.site_type], ['坪數', r => r.area_ping], ['地址', r => r.address],
+        ['簽約日', r => r.sign_date], ['開工日', r => r.start_date], ['約定完工', r => r.due_date],
+        ['實際完工', r => r.actual_end_date], ['逾期天數', r => r.delay_days || ''],
+        ['工進%', r => r.progress === null ? '' : r.progress],
+        ['合約總價', r => r.contract_total], ['已收', r => r.received], ['應收', r => r.receivable],
+        ['逾期未收', r => r.overdue], ['毛利', r => r.gross_profit], ['毛利率%', r => r.margin],
+        ['追加待簽張數', r => r.change_sent_count]
+      ], () => rows);
     };
     act.querySelector('#add').onclick = () => projectDialog(null, async () => { await App.reloadProjects(); load(); });
     await load();

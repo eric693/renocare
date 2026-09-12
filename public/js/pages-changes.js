@@ -15,16 +15,17 @@ App.page('changes', {
       '變更單可以帶「展延工期」，簽認後合約完工日會自動往後，逾期違約金才不會算在自己頭上。']
   },
   async render(el) {
-    const state = { project_id: '', status: '' };
+    const state = { project_id: '', status: '', q: '' };
     const bar = App.filterBar([
       { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) },
-      { name: 'status', label: '狀態', type: 'select', options: [['', '全部']].concat(twOpts(TW.change_status)) }
+      { name: 'status', label: '狀態', type: 'select', options: [['', '全部']].concat(twOpts(TW.change_status)) },
+      { name: 'q', label: '搜尋', placeholder: '單號／標題／案場' }
     ], v => { Object.assign(state, v); load(); });
     el.innerHTML = '';
     el.appendChild(bar);
     const act = document.createElement('div');
     act.className = 'actions';
-    act.innerHTML = '<button class="btn" id="add">新增變更單</button>';
+    act.innerHTML = '<button class="btn" id="add">新增變更單</button>' + UI.csvBtn('changes');
     el.appendChild(act);
     const sum = document.createElement('div');
     el.appendChild(sum);
@@ -54,6 +55,15 @@ App.page('changes', {
           <div>${r.sign_channel === 'client' ? '線上簽認' : '紙本回簽'}</div>` : '—'}</td>
         <td class="nowrap"><button class="btn tiny secondary" data-open="${r.id}">明細</button></td>
       </tr>`), '還沒有變更單');
+      UI.bindCsv(act, 'changes', '追加減帳', [
+        ['單號', r => r.no], ['案場', r => r.project_name], ['案場代號', r => r.project_code],
+        ['事由', r => r.title], ['原因', r => twText(TW.change_reason, r.reason)],
+        ['說明', r => r.detail], ['金額', r => r.amount], ['展延天數', r => r.days_delay],
+        ['狀態', r => twText(TW.change_status, r.status)],
+        ['送簽時間', r => r.sent_at], ['簽認時間', r => r.signed_at], ['簽認人', r => r.signed_name],
+        ['簽認管道', r => r.sign_channel === 'client' ? '業主端線上簽' : r.sign_channel ? '紙本回簽' : ''],
+        ['簽認 IP', r => r.sign_ip], ['建立人', r => r.created_by_name], ['備註', r => r.note]
+      ], rows);
       box.querySelectorAll('[data-open]').forEach(b => b.onclick = () => changeDetail(Number(b.dataset.open), load));
     };
     act.querySelector('#add').onclick = () => changeDialog(App.lastProject(), null, load);
@@ -116,6 +126,7 @@ async function changeDetail(id, done) {
         </tr>`), '還沒有明細')}
       </div>
       <div class="modal-foot" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
+        <button class="btn secondary" id="c-print">列印變更單</button>
         ${editable ? `<button class="btn secondary" id="c-edit">編輯單頭</button>
           <button class="btn" id="c-send">送簽給業主</button>` : ''}
         ${open ? `<button class="btn secondary" id="c-paper">紙本回簽登錄</button>` : ''}
@@ -147,6 +158,32 @@ async function changeDetail(id, done) {
     await DEL('/change-items/' + b.dataset.cidel);
     m.close(); changeDetail(id, done);
   });
+  // 紙本回簽用的那張紙：業主在現場簽，回來再登錄。已簽認的印出來是歸檔憑證，
+  // 所以簽認資訊（誰、何時、什麼管道）要一起印在上面。
+  q('#c-print').onclick = () => UI.print(`工程變更單　${c.no}`, `
+    <div class="kv">
+      <div><b>案場</b>${UI.esc(c.project_name)}（${UI.esc(c.project_code)}）</div>
+      <div><b>業主</b>${UI.esc(c.customer_name || '')}</div>
+      <div><b>變更事由</b>${UI.esc(c.title)}</div>
+      <div><b>變更原因</b>${UI.esc(twText(TW.change_reason, c.reason))}</div>
+      <div><b>開單日期</b>${UI.esc((c.created_at || '').slice(0, 10))}</div>
+      <div><b>工期展延</b>${c.days_delay ? c.days_delay + ' 天' : '不展延'}</div>
+    </div>
+    ${c.detail ? `<h2>說明</h2><div class="note">${UI.esc(c.detail)}</div>` : ''}
+    <h2>變更項目</h2>
+    ${UI.ptable(['類型', '類別', '項目', '規格', '單位', '#數量', '#單價', '#金額'],
+      c.items.map(i => [twText(TW.change_kind, i.kind), UI.esc(i.category || ''), UI.esc(i.name),
+        UI.esc(i.spec || ''), UI.esc(i.unit), i.qty, UI.fmtMoney(i.unit_price), UI.fmtMoney(i.amount)]))}
+    <div class="total">變更金額合計　${UI.fmtMoney(c.amount)}</div>
+    <h2>業主確認</h2>
+    <div class="note muted">本變更單經業主簽認後，變更金額併入合約總價；${c.days_delay
+      ? `並同意合約完工日往後展延 ${c.days_delay} 天。` : '合約完工日不變。'}
+未經簽認之項目不予施作、不予計價。</div>
+    ${c.signed_at
+      ? `<div class="note" style="margin-top:14px">已由 <b>${UI.esc(c.signed_name)}</b> 於 ${UI.esc(c.signed_at)} 以${
+        c.sign_channel === 'client' ? '線上簽認' : '紙本回簽'}確認${c.sign_ip ? `（來源 IP ${UI.esc(c.sign_ip)}）` : ''}。</div>`
+      : '<div class="sign"><div>業主簽章／日期</div><div>本公司代表／日期</div></div>'}`);
+
   q('#c-edit') && (q('#c-edit').onclick = () => { m.close(); changeDialog(null, c, () => changeDetail(id, done)); });
   q('#c-send') && (q('#c-send').onclick = async () => {
     try {

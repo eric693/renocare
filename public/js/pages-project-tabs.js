@@ -19,6 +19,7 @@ TABS.money = d => {
     <td class="nowrap">
       ${x.status === 'ready' || x.status === 'pending' ? `<button class="btn tiny" data-inv="${x.id}">開單請款</button>` : ''}
       ${x.outstanding > 0 && x.status !== 'pending' ? `<button class="btn tiny" data-rcv="${x.id}">登錄收款</button>` : ''}
+      ${x.status === 'invoiced' || x.status === 'paid' ? `<button class="btn tiny secondary" data-msprint="${x.id}">請款單</button>` : ''}
       <button class="btn tiny secondary" data-msedit="${x.id}">編輯</button>
       <button class="btn tiny secondary" data-msdel="${x.id}">刪除</button></td>
   </tr>`);
@@ -68,6 +69,37 @@ TABS.money = d => {
 
 TABBIND.money = (el, d, reload) => {
   const pid = d.project.id;
+  // 請款單是要跟發票一起寄出去的：只印這一期該收多少、收到哪裡，不印成本也不印其他節點。
+  el.querySelectorAll('[data-msprint]').forEach(b => b.onclick = () => {
+    const x = d.money.milestones.find(y => String(y.id) === b.dataset.msprint);
+    const p = d.project;
+    const paid = d.receipts.filter(r => r.milestone_id === x.id);
+    UI.print(`工程請款單　${UI.esc(p.code)}／${UI.esc(x.name)}`, `
+      <div class="kv">
+        <div><b>業主</b>${UI.esc(p.customer_name || '')}</div>
+        <div><b>開單日期</b>${UI.esc(x.invoiced_date || UI.today())}</div>
+        <div><b>案場</b>${UI.esc(p.name)}（${UI.esc(p.code)}）</div>
+        <div><b>付款期限</b>${UI.esc(x.due_date || '—')}</div>
+        <div><b>工程地點</b>${UI.esc(p.address || '')}</div>
+        <div><b>請款節點</b>${UI.esc(x.name)}</div>
+      </div>
+      <h2>請款內容</h2>
+      ${UI.ptable(['項目', '計算依據', '#應請金額', '#已收', '#本次應收'],
+        [[UI.esc(x.name), x.basis === 'percent' ? `合約總價 ${x.percent}%` : '固定金額',
+          UI.fmtMoney(x.amount), UI.fmtMoney(x.received), UI.fmtMoney(x.outstanding)]])}
+      <div class="total">本次應收　${UI.fmtMoney(x.outstanding)}</div>
+      <h2>合約與收款概況</h2>
+      ${UI.ptable(['項目', '#金額'], [
+        ['合約金額（含已簽認追加減帳）', UI.fmtMoney(d.money.contract_total)],
+        ['累計已收', UI.fmtMoney(d.money.received)],
+        ['累計未收', UI.fmtMoney(d.money.receivable)]
+      ])}
+      ${paid.length ? `<h2>本節點已收紀錄</h2>${UI.ptable(['日期', '#金額', '方式', '發票號碼'],
+        paid.map(r => [UI.esc(r.date), UI.fmtMoney(r.amount), UI.esc(r.method || ''), UI.esc(r.invoice_no || '')]))}` : ''}
+      <h2>匯款資訊</h2>
+      <div class="note muted">請於付款期限前完成匯款，並回傳匯款收據以便開立發票。</div>
+      <div class="sign"><div>本公司代表／日期</div><div>業主簽收／日期</div></div>`);
+  });
   el.querySelector('#ct-add').onclick = () => contractDialog(pid, null, reload);
   el.querySelectorAll('[data-ctedit]').forEach(b => b.onclick = () =>
     contractDialog(pid, d.contracts.find(x => String(x.id) === b.dataset.ctedit), reload));

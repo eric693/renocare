@@ -289,19 +289,27 @@ router.post('/subcontracts/:id/release', requireStaff('subcontracts'), (req, res
 // ---- 應付總表（跨案）----
 
 router.get('/payables', requireStaff('subcontracts'), (req, res) => {
+  const { vendor_id = '', project_id = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   const rows = db.prepare(`SELECT v.id, v.date, v.period, v.gross_amount, v.net_amount, v.status, v.paid_date,
       s.no, s.trade, s.project_id, p.name AS project_name, p.code AS project_code,
       ve.name AS vendor_name, ve.phone AS vendor_phone
     FROM valuations v JOIN subcontracts s ON s.id = v.subcontract_id
     JOIN projects p ON p.id = s.project_id LEFT JOIN vendors ve ON ve.id = s.vendor_id
-    WHERE v.status = 'confirmed' ORDER BY v.date`).all();
+    WHERE v.status = 'confirmed'
+      AND (? = '' OR ve.id = ?) AND (? = '' OR s.project_id = ?)
+      AND (? = '' OR ve.name LIKE ? OR s.trade LIKE ? OR s.no LIKE ? OR p.name LIKE ? OR p.code LIKE ?)
+    ORDER BY v.date`)
+    .all(vendor_id, vendor_id, project_id, project_id, kw, like, like, like, like, like);
   const held = db.prepare(`SELECT ve.id AS vendor_id, ve.name AS vendor_name,
       SUM(x.retention) - COALESCE((SELECT SUM(r.amount) FROM retention_releases r
         JOIN subcontracts s2 ON s2.id = r.subcontract_id WHERE s2.vendor_id = ve.id AND r.kind='retention'),0) AS retention_held,
       SUM(x.warranty_hold) - COALESCE((SELECT SUM(r.amount) FROM retention_releases r
         JOIN subcontracts s2 ON s2.id = r.subcontract_id WHERE s2.vendor_id = ve.id AND r.kind='warranty'),0) AS warranty_held
     FROM valuations x JOIN subcontracts s ON s.id = x.subcontract_id JOIN vendors ve ON ve.id = s.vendor_id
-    WHERE x.status <> 'draft' GROUP BY ve.id HAVING retention_held > 0 OR warranty_held > 0`).all();
+    WHERE x.status <> 'draft' AND (? = '' OR ve.id = ?) AND (? = '' OR ve.name LIKE ?)
+    GROUP BY ve.id HAVING retention_held > 0 OR warranty_held > 0`)
+    .all(vendor_id, vendor_id, kw, like);
   res.json({
     rows, held,
     sum: rows.reduce((a, r) => a + r.net_amount, 0)

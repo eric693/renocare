@@ -16,7 +16,8 @@ const pickDefect = picker(['project_id', 'source', 'location', 'item', 'descript
   ['project_id', 'vendor_id', 'owner_id', 'cost', 'charge_vendor']);
 
 router.get('/defects', requireStaff('defects'), (req, res) => {
-  const { project_id = '', status = '', vendor_id = '', source = '' } = req.query;
+  const { project_id = '', status = '', vendor_id = '', source = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   const rows = db.prepare(`SELECT d.*, v.name AS vendor_name, u.name AS owner_name,
       p.name AS project_name, p.code AS project_code,
       (SELECT COUNT(*) FROM photos ph WHERE ph.defect_id = d.id) AS photo_count
@@ -24,8 +25,11 @@ router.get('/defects', requireStaff('defects'), (req, res) => {
     LEFT JOIN vendors v ON v.id = d.vendor_id LEFT JOIN users u ON u.id = d.owner_id
     WHERE (? = '' OR d.project_id = ?) AND (? = '' OR d.status = ?)
       AND (? = '' OR d.vendor_id = ?) AND (? = '' OR d.source = ?)
+      AND (? = '' OR d.no LIKE ? OR d.location LIKE ? OR d.item LIKE ? OR d.description LIKE ?
+           OR p.name LIKE ? OR p.code LIKE ?)
     ORDER BY (d.status IN ('verified','void')), d.due_date, d.id DESC`)
-    .all(project_id, project_id, status, status, vendor_id, vendor_id, source, source);
+    .all(project_id, project_id, status, status, vendor_id, vendor_id, source, source,
+      kw, like, like, like, like, like, like);
   const t = today();
   for (const r of rows) {
     r.overdue = r.status === 'open' || r.status === 'fixing' ? !!(r.due_date && r.due_date < t) : false;
@@ -75,18 +79,27 @@ const pickWarranty = picker(['project_id', 'item', 'vendor_id', 'start_date', 'm
   ['project_id', 'vendor_id', 'months']);
 
 router.get('/warranties', requireStaff('warranty'), (req, res) => {
-  const { project_id = '', expiring = '' } = req.query;
+  const { project_id = '', expiring = '', status = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   const rows = db.prepare(`SELECT w.*, v.name AS vendor_name, p.name AS project_name, p.code AS project_code,
       c.name AS customer_name, c.phone AS customer_phone
     FROM warranties w JOIN projects p ON p.id = w.project_id
     LEFT JOIN vendors v ON v.id = w.vendor_id LEFT JOIN customers c ON c.id = p.customer_id
-    WHERE (? = '' OR w.project_id = ?) ORDER BY w.end_date`).all(project_id, project_id);
+    WHERE (? = '' OR w.project_id = ?)
+      AND (? = '' OR w.item LIKE ? OR p.name LIKE ? OR p.code LIKE ? OR c.name LIKE ? OR v.name LIKE ?)
+    ORDER BY w.end_date`).all(project_id, project_id, kw, like, like, like, like, like);
   const t = today();
   for (const r of rows) {
     r.expired = !!(r.end_date && r.end_date < t);
     r.days_left = r.end_date ? Math.round((new Date(r.end_date) - new Date(t)) / 86400000) : null;
   }
-  res.json(expiring ? rows.filter(r => !r.expired && r.days_left !== null && r.days_left <= 60) : rows);
+  // status 是算出來的（沒有欄位），所以在這裡篩：valid 保固中、soon 60 天內到期、expired 已到期
+  const byStatus = {
+    valid: r => !r.expired,
+    soon: r => !r.expired && r.days_left !== null && r.days_left <= 60,
+    expired: r => r.expired
+  }[expiring ? 'soon' : status];
+  res.json(byStatus ? rows.filter(byStatus) : rows);
 });
 
 router.post('/warranties', requireStaff('warranty'), (req, res) => {
@@ -201,12 +214,14 @@ const pickPermit = picker(['project_id', 'kind', 'agency', 'doc_no', 'applied_da
   'expiry_date', 'owner_id', 'status', 'note'], ['project_id', 'owner_id']);
 
 router.get('/permits', requireStaff('permits'), (req, res) => {
-  const { project_id = '', status = '' } = req.query;
+  const { project_id = '', status = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   const rows = db.prepare(`SELECT pm.*, p.name AS project_name, p.code AS project_code, u.name AS owner_name
     FROM permits pm JOIN projects p ON p.id = pm.project_id LEFT JOIN users u ON u.id = pm.owner_id
     WHERE (? = '' OR pm.project_id = ?) AND (? = '' OR pm.status = ?)
+      AND (? = '' OR pm.kind LIKE ? OR pm.agency LIKE ? OR pm.doc_no LIKE ? OR p.name LIKE ? OR p.code LIKE ?)
     ORDER BY (pm.status IN ('approved','na')), pm.expiry_date, pm.id`)
-    .all(project_id, project_id, status, status);
+    .all(project_id, project_id, status, status, kw, like, like, like, like, like);
   const t = today();
   for (const r of rows) {
     r.days_left = r.expiry_date ? Math.round((new Date(r.expiry_date) - new Date(t)) / 86400000) : null;

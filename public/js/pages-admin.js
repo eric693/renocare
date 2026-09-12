@@ -5,23 +5,58 @@ App.page('users', {
   sub: '每個人只看得到自己該看的；金額相關的模組可以設成唯讀',
   module: 'users',
   async render(el) {
-    const [rows, mods] = await Promise.all([GET('/users'), GET('/modules')]);
-    el.innerHTML = `<div class="actions"><button class="btn" id="add">新增帳號</button></div>
-      ${UI.table(['帳號', '姓名／職稱', '角色', '可用模組', '狀態', ''], rows.map(r => `<tr class="${r.active ? '' : 'dim'}">
-        <td>${UI.esc(r.username)}</td>
-        <td><strong>${UI.esc(r.name)}</strong><div class="muted">${UI.esc(r.title || '')}</div></td>
-        <td>${r.role === 'admin' ? UI.tag('管理員', 'ok') : '員工'}</td>
-        <td class="muted">${r.role === 'admin' ? '全部' : r.modules.map(k =>
-      (mods.modules.find(m => m.key === k) || {}).label || k).join('、') || '（未開通）'}
-          ${r.readonly && r.readonly.length ? `<div>唯讀：${r.readonly.map(k =>
-        (mods.modules.find(m => m.key === k) || {}).label || k).join('、')}</div>` : ''}</td>
-        <td>${r.active ? '啟用' : '停用'}</td>
-        <td><button class="btn tiny secondary" data-edit="${r.id}">編輯</button></td>
-      </tr>`), '')}`;
-    const load = () => App.reload();
-    el.querySelector('#add').onclick = () => userDialog(null, mods, load);
-    el.querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
-      userDialog(rows.find(x => String(x.id) === b.dataset.edit), mods, load));
+    const state = { role: '', active: '', q: '' };
+    const mods = await GET('/modules');
+    const bar = App.filterBar([
+      { name: 'role', label: '角色', type: 'select', options: [['', '全部'], ['admin', '管理員'], ['staff', '員工']] },
+      { name: 'active', label: '狀態', type: 'select', options: [['', '全部'], ['1', '啟用'], ['0', '停用']] },
+      { name: 'q', label: '搜尋', placeholder: '帳號／姓名／職稱／電話' }
+    ], v => { Object.assign(state, v); load(); });
+    el.innerHTML = '';
+    el.appendChild(bar);
+    const box = document.createElement('div');
+    el.appendChild(box);
+
+    const load = async () => {
+      const rows = await GET('/users' + App.qs(state));
+      box.innerHTML = `<div class="actions"><button class="btn" id="add">新增帳號</button>${UI.csvBtn('users')}</div>
+        ${UI.table(['帳號', '姓名／職稱', '角色', '可用模組', '狀態', ''], rows.map(r => `<tr class="${r.active ? '' : 'dim'}">
+          <td>${UI.esc(r.username)}</td>
+          <td><strong>${UI.esc(r.name)}</strong><div class="muted">${UI.esc(r.title || '')}</div></td>
+          <td>${r.role === 'admin' ? UI.tag('管理員', 'ok') : '員工'}</td>
+          <td class="muted">${r.role === 'admin' ? '全部' : r.modules.map(k =>
+        (mods.modules.find(m => m.key === k) || {}).label || k).join('、') || '（未開通）'}
+            ${r.readonly && r.readonly.length ? `<div>唯讀：${r.readonly.map(k =>
+          (mods.modules.find(m => m.key === k) || {}).label || k).join('、')}</div>` : ''}</td>
+          <td>${r.active ? '啟用' : '停用'}</td>
+          <td class="nowrap"><button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
+            <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td>
+        </tr>`), '找不到符合條件的帳號')}`;
+      UI.bindCsv(box, 'users', '帳號清單', [
+        ['帳號', r => r.username], ['姓名', r => r.name], ['職稱', r => r.title],
+        ['角色', r => r.role === 'admin' ? '管理員' : '員工'], ['電話', r => r.phone],
+        ['狀態', r => r.active ? '啟用' : '停用'],
+        ['可用模組', r => r.role === 'admin' ? '全部' : r.modules.map(k =>
+          (mods.modules.find(m => m.key === k) || {}).label || k).join('、')],
+        ['其中唯讀', r => (r.readonly || []).map(k =>
+          (mods.modules.find(m => m.key === k) || {}).label || k).join('、')],
+        ['建立時間', r => r.created_at]
+      ], rows);
+      box.querySelector('#add').onclick = () => userDialog(null, mods, load);
+      box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () =>
+        userDialog(rows.find(x => String(x.id) === b.dataset.edit), mods, load));
+      // 做過事的帳號刪不掉，後端會改成停用並回報原因，照實說給使用者聽
+      box.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+        const u = rows.find(x => String(x.id) === b.dataset.del);
+        if (!await UI.confirm(`確定刪除「${u.name}」？做過事的帳號會改為停用，歷史紀錄才不會變成無名氏。`)) return;
+        try {
+          const r = await DEL('/users/' + u.id);
+          UI.toast(r.message || '已刪除');
+          load();
+        } catch (e) { UI.err(e); }
+      });
+    };
+    await load();
   }
 });
 
@@ -117,16 +152,22 @@ App.page('audit', {
   sub: '誰在什麼時候改了什麼，含業主端的線上簽認',
   module: 'audit',
   async render(el) {
-    const state = { q: '' };
-    const bar = App.filterBar([{ name: 'q', label: '搜尋', placeholder: '人員／動作／對象' }],
-      v => { Object.assign(state, v); load(); });
+    const state = { q: '', actor_type: '', date_from: '', date_to: '' };
+    const bar = App.filterBar([
+      { name: 'actor_type', label: '身分', type: 'select',
+        options: [['', '全部'], ['staff', '員工'], ['client', '業主端']] },
+      { name: 'date_from', label: '起', type: 'date' },
+      { name: 'date_to', label: '迄', type: 'date' },
+      { name: 'q', label: '搜尋', placeholder: '人員／動作／對象／細節' }
+    ], v => { Object.assign(state, v); load(); });
     el.innerHTML = '';
     el.appendChild(bar);
     const box = document.createElement('div');
     el.appendChild(box);
     const load = async () => {
       const rows = await GET('/audit' + App.qs(state));
-      box.innerHTML = UI.table(['時間', '身分', '人員', '動作', '對象', '細節'], rows.map(r => `<tr>
+      box.innerHTML = `<div class="actions">${UI.csvBtn('audit')}</div>` +
+        UI.table(['時間', '身分', '人員', '動作', '對象', '細節'], rows.map(r => `<tr>
         <td class="nowrap muted">${UI.esc(r.created_at)}</td>
         <td>${r.actor_type === 'client' ? UI.tag('業主', 'warn') : '員工'}</td>
         <td>${UI.esc(r.actor_name)}</td>
@@ -134,6 +175,11 @@ App.page('audit', {
         <td>${UI.esc(r.target)}</td>
         <td class="muted">${UI.esc(r.detail)}</td>
       </tr>`), '沒有紀錄');
+      UI.bindCsv(box, 'audit', '操作紀錄', [
+        ['時間', r => r.created_at], ['身分', r => r.actor_type === 'client' ? '業主' : '員工'],
+        ['人員', r => r.actor_name], ['動作', r => r.action], ['對象', r => r.target],
+        ['細節', r => r.detail]
+      ], rows);
     };
     await load();
   }

@@ -24,82 +24,96 @@ App.page('dashboard', {
     ]
   },
   async render(el) {
-    const d = await GET('/dashboard');
-    const s = d.summary, a = d.attention;
+    // 月份只影響「現金與接案」那一段（收付款、新簽約、報價成交都是按月結算的）；
+    // 在建案場與待處理事項永遠是「現在」的狀態，不跟著月份跑。
+    const state = { month: UI.thisMonth() };
+    const bar2 = App.filterBar([
+      { name: 'month', label: '結算月份', type: 'month', value: state.month }
+    ], v => { state.month = v.month || UI.thisMonth(); load(); });
+    el.innerHTML = '';
+    el.appendChild(bar2);
+    const box = document.createElement('div');
+    el.appendChild(box);
 
-    const alerts = [
-      a.change_sent && ['追加單未簽認', a.change_sent + ' 張', 'changes', 'danger', '做了收不到錢的頭號來源'],
-      a.overdue_amount && ['逾期未收', UI.fmtMoney(a.overdue_amount), 'receivables', 'danger', ''],
-      a.ready_amount && ['可請款未開單', UI.fmtMoney(a.ready_amount), 'receivables', 'warn', '工進到了，單還沒開'],
-      a.material_risk && ['建材交期有風險', a.material_risk + ' 項', 'materials', 'warn', '料沒到，工班會撲空'],
-      a.schedule_late && ['工序已逾期', a.schedule_late + ' 項', 'projects', 'warn', ''],
-      a.defects_overdue && ['缺失逾期未改', a.defects_overdue + ' 件', 'defects', 'warn', ''],
-      a.permit_soon && ['許可將到期', a.permit_soon + ' 件', 'permits', 'danger', ''],
-      a.warranty_soon && ['保固將屆', a.warranty_soon + ' 件', 'warranty', '', '到期前回訪一次'],
-      a.vendor_insurance && ['工班保險已過期', a.vendor_insurance + ' 家', 'vendors', 'danger', '出事是公司扛'],
-      a.retention_held && ['押著工班保留款', UI.fmtMoney(a.retention_held), 'payables', '', ''],
-      a.sub_unpaid && ['估驗已確認待付', UI.fmtMoney(a.sub_unpaid), 'payables', '', '']
-    ].filter(Boolean);
+    const load = async () => {
+      const d = await GET('/dashboard' + App.qs(state));
+      const s = d.summary, a = d.attention;
 
-    el.innerHTML = `
-      <div class="card">
-        <h3>在建案場（${d.projects.length} 案）</h3>
-        <div class="stat-grid">
-          ${stat(UI.fmtMoney(s.contract_total), '合約總價（含已簽追加）')}
-          ${stat(UI.fmtMoney(s.received), '已收', 'ok')}
-          ${stat(UI.fmtMoney(s.receivable), '現在可以去要的錢', s.receivable ? 'warn' : '', 'receivables')}
-          ${stat(UI.fmtMoney(s.overdue), '其中已逾期', s.overdue ? 'danger' : '', 'receivables')}
-          ${stat(UI.fmtMoney(s.gross_profit), '預估毛利', s.gross_profit < 0 ? 'danger' : 'ok', 'profit', `毛利率 ${s.margin}%`)}
-          ${stat(UI.fmtMoney(s.change_pending), '待簽認追加金額', s.change_pending ? 'warn' : '', 'changes')}
+      const alerts = [
+        a.change_sent && ['追加單未簽認', a.change_sent + ' 張', 'changes', 'danger', '做了收不到錢的頭號來源'],
+        a.overdue_amount && ['逾期未收', UI.fmtMoney(a.overdue_amount), 'receivables', 'danger', ''],
+        a.ready_amount && ['可請款未開單', UI.fmtMoney(a.ready_amount), 'receivables', 'warn', '工進到了，單還沒開'],
+        a.material_risk && ['建材交期有風險', a.material_risk + ' 項', 'materials', 'warn', '料沒到，工班會撲空'],
+        a.schedule_late && ['工序已逾期', a.schedule_late + ' 項', 'projects', 'warn', ''],
+        a.defects_overdue && ['缺失逾期未改', a.defects_overdue + ' 件', 'defects', 'warn', ''],
+        a.permit_soon && ['許可將到期', a.permit_soon + ' 件', 'permits', 'danger', ''],
+        a.warranty_soon && ['保固將屆', a.warranty_soon + ' 件', 'warranty', '', '到期前回訪一次'],
+        a.vendor_insurance && ['工班保險已過期', a.vendor_insurance + ' 家', 'vendors', 'danger', '出事是公司扛'],
+        a.retention_held && ['押著工班保留款', UI.fmtMoney(a.retention_held), 'payables', '', ''],
+        a.sub_unpaid && ['估驗已確認待付', UI.fmtMoney(a.sub_unpaid), 'payables', '', '']
+      ].filter(Boolean);
+
+      box.innerHTML = `
+        <div class="card">
+          <h3>在建案場（${d.projects.length} 案）</h3>
+          <div class="stat-grid">
+            ${stat(UI.fmtMoney(s.contract_total), '合約總價（含已簽追加）')}
+            ${stat(UI.fmtMoney(s.received), '已收', 'ok')}
+            ${stat(UI.fmtMoney(s.receivable), '現在可以去要的錢', s.receivable ? 'warn' : '', 'receivables')}
+            ${stat(UI.fmtMoney(s.overdue), '其中已逾期', s.overdue ? 'danger' : '', 'receivables')}
+            ${stat(UI.fmtMoney(s.gross_profit), '預估毛利', s.gross_profit < 0 ? 'danger' : 'ok', 'profit', `毛利率 ${s.margin}%`)}
+            ${stat(UI.fmtMoney(s.change_pending), '待簽認追加金額', s.change_pending ? 'warn' : '', 'changes')}
+          </div>
         </div>
-      </div>
 
-      <div class="card">
-        <h3>需要立刻處理</h3>
-        ${alerts.length ? `<div class="alert-grid">${alerts.map(([label, val, href, cls, hint]) =>
-          `<div class="alert-item ${cls}" onclick="location.hash='${href}'">
-            <div class="av">${UI.esc(val)}</div><div class="al">${UI.esc(label)}</div>
-            ${hint ? `<div class="ah">${UI.esc(hint)}</div>` : ''}</div>`).join('')}</div>`
-      : '<div class="empty ok-empty">目前沒有需要立刻處理的事。</div>'}
-      </div>
-
-      <div class="card">
-        <h3>本月現金（${d.cash.month}）</h3>
-        <div class="stat-grid">
-          ${stat(UI.fmtMoney(d.cash.inflow), '收進來')}
-          ${stat(UI.fmtMoney(d.cash.outflow), '付出去')}
-          ${stat(UI.fmtMoney(d.cash.net), '淨流入', d.cash.net < 0 ? 'danger' : 'ok')}
-          ${stat(d.sales.signed_count, '本月新簽約', '', '', UI.fmtMoney(d.sales.signed_amount))}
-          ${stat(`${d.sales.won}/${d.sales.quoted}`, '本月報價成交', '', 'quotes')}
+        <div class="card">
+          <h3>需要立刻處理</h3>
+          ${alerts.length ? `<div class="alert-grid">${alerts.map(([label, val, href, cls, hint]) =>
+            `<div class="alert-item ${cls}" onclick="location.hash='${href}'">
+              <div class="av">${UI.esc(val)}</div><div class="al">${UI.esc(label)}</div>
+              ${hint ? `<div class="ah">${UI.esc(hint)}</div>` : ''}</div>`).join('')}</div>`
+        : '<div class="empty ok-empty">目前沒有需要立刻處理的事。</div>'}
         </div>
-      </div>
 
-      <div class="card">
-        <h3>案場現況</h3>
-        ${UI.table(['案場', '狀態', '工進', '合約總價', '已收', '應收', '毛利率', '工期'],
-      d.projects.map(p => `<tr class="clickable" onclick="location.hash='projects?id=${p.id}'">
-          <td><strong>${UI.esc(p.name)}</strong><div class="muted">${UI.esc(p.code)}　${UI.esc(p.customer_name || '')}</div></td>
-          <td>${UI.tag(twText(TW.project_status, p.status), p.status === 'construction' ? 'ok' : '')}
-            ${p.change_sent_count ? UI.tag(`${p.change_sent_count} 張追加待簽`, 'danger') : ''}</td>
-          <td>${p.progress === null ? '<span class="muted">未排工序</span>' : bar(p.progress)}</td>
-          <td class="num">${UI.fmtMoney(p.contract_total)}</td>
-          <td class="num">${UI.fmtMoney(p.received)}</td>
-          <td class="num ${p.overdue ? 'danger' : ''}">${UI.fmtMoney(p.receivable)}
-            ${p.overdue ? `<div class="muted danger">逾期 ${UI.fmtMoney(p.overdue)}</div>` : ''}</td>
-          <td class="num ${p.gross_profit < 0 ? 'danger' : ''}">${p.margin}%</td>
-          <td>${p.delay_days ? UI.tag(`逾期 ${p.delay_days} 天`, 'danger') : UI.date(p.due_date)}</td>
-        </tr>`), '目前沒有進行中的案場')}
-      </div>
+        <div class="card">
+          <h3>現金與接案（${UI.esc(d.cash.month)}）${d.cash.month === UI.thisMonth() ? '' : '　<span class="muted">非本月</span>'}</h3>
+          <div class="stat-grid">
+            ${stat(UI.fmtMoney(d.cash.inflow), '收進來')}
+            ${stat(UI.fmtMoney(d.cash.outflow), '付出去')}
+            ${stat(UI.fmtMoney(d.cash.net), '淨流入', d.cash.net < 0 ? 'danger' : 'ok')}
+            ${stat(d.sales.signed_count, '當月新簽約', '', '', UI.fmtMoney(d.sales.signed_amount))}
+            ${stat(`${d.sales.won}/${d.sales.quoted}`, '當月報價成交', '', 'quotes')}
+          </div>
+        </div>
 
-      <div class="card">
-        <h3>我的待辦（${d.my_tasks.length}）</h3>
-        ${UI.table(['工作', '案場', '到期'], d.my_tasks.map(t => `<tr>
-          <td>${UI.esc(t.title)}${t.priority === 'high' ? ' ' + UI.tag('急', 'danger') : ''}</td>
-          <td class="muted">${UI.esc(t.project_name || '')}</td>
-          <td class="nowrap ${t.due_date && t.due_date < d.date ? 'danger' : ''}">${UI.date(t.due_date)}</td>
-        </tr>`), '目前沒有待辦')}
-        <div style="margin-top:10px"><a href="#mytasks">前往我的工作 →</a></div>
-      </div>`;
+        <div class="card">
+          <h3>案場現況</h3>
+          ${UI.table(['案場', '狀態', '工進', '合約總價', '已收', '應收', '毛利率', '工期'],
+        d.projects.map(p => `<tr class="clickable" onclick="location.hash='projects?id=${p.id}'">
+            <td><strong>${UI.esc(p.name)}</strong><div class="muted">${UI.esc(p.code)}　${UI.esc(p.customer_name || '')}</div></td>
+            <td>${UI.tag(twText(TW.project_status, p.status), p.status === 'construction' ? 'ok' : '')}
+              ${p.change_sent_count ? UI.tag(`${p.change_sent_count} 張追加待簽`, 'danger') : ''}</td>
+            <td>${p.progress === null ? '<span class="muted">未排工序</span>' : bar(p.progress)}</td>
+            <td class="num">${UI.fmtMoney(p.contract_total)}</td>
+            <td class="num">${UI.fmtMoney(p.received)}</td>
+            <td class="num ${p.overdue ? 'danger' : ''}">${UI.fmtMoney(p.receivable)}
+              ${p.overdue ? `<div class="muted danger">逾期 ${UI.fmtMoney(p.overdue)}</div>` : ''}</td>
+            <td class="num ${p.gross_profit < 0 ? 'danger' : ''}">${p.margin}%</td>
+            <td>${p.delay_days ? UI.tag(`逾期 ${p.delay_days} 天`, 'danger') : UI.date(p.due_date)}</td>
+          </tr>`), '目前沒有進行中的案場')}
+        </div>
+
+        <div class="card">
+          <h3>我的待辦（${d.my_tasks.length}）</h3>
+          ${UI.table(['工作', '案場', '到期'], d.my_tasks.map(t => `<tr>
+            <td>${UI.esc(t.title)}${t.priority === 'high' ? ' ' + UI.tag('急', 'danger') : ''}</td>
+            <td class="muted">${UI.esc(t.project_name || '')}</td>
+            <td class="nowrap ${t.due_date && t.due_date < d.date ? 'danger' : ''}">${UI.date(t.due_date)}</td>
+          </tr>`), '目前沒有待辦')}
+          <div style="margin-top:10px"><a href="#mytasks">前往我的工作 →</a></div>
+        </div>`;
+    };
+    await load();
   }
 });
 
@@ -119,17 +133,18 @@ function taskPage(key, title, sub, mine) {
       notes: ['系統自動產生的待辦（標示「自動」）處理完就按完成，同一件事不會重複跳出來。']
     },
     async render(el) {
-      const state = { status: '', assignee_id: mine ? '' : '', project_id: '' };
+      const state = { status: '', assignee_id: mine ? '' : '', project_id: '', q: '' };
       const bar = App.filterBar([
         { name: 'status', label: '狀態', type: 'select', options: [['', '未完成']].concat(twOpts(TW.task_status)) },
         ...(mine ? [] : [{ name: 'assignee_id', label: '負責人', type: 'select', options: App.staffOptions(true) }]),
-        { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) }
+        { name: 'project_id', label: '案場', type: 'select', options: App.projectOptions(true) },
+        { name: 'q', label: '搜尋', placeholder: '標題／內容／案場' }
       ], v => { Object.assign(state, v); load(); });
       el.innerHTML = '';
       el.appendChild(bar);
       const actions = document.createElement('div');
       actions.className = 'actions';
-      actions.innerHTML = '<button class="btn" id="add">新增工作</button>';
+      actions.innerHTML = '<button class="btn" id="add">新增工作</button>' + UI.csvBtn('tasks');
       el.appendChild(actions);
       const box = document.createElement('div');
       el.appendChild(box);
@@ -154,6 +169,13 @@ function taskPage(key, title, sub, mine) {
             <button class="btn tiny secondary" data-edit="${r.id}">編輯</button>
             <button class="btn tiny secondary" data-del="${r.id}">刪除</button></td>
         </tr>`), '目前沒有工作');
+        UI.bindCsv(actions, 'tasks', title, [
+          ['工作', r => r.title], ['內容', r => r.detail], ['案場', r => r.project_name],
+          ['案場代號', r => r.project_code], ['負責人', r => r.assignee_name],
+          ['到期', r => r.due_date], ['優先', r => twText(TW.priority, r.priority)],
+          ['狀態', r => twText(TW.task_status, r.status)],
+          ['來源', r => r.source === 'auto' ? '系統自動' : '人工建立'], ['建立時間', r => r.created_at]
+        ], () => rows);
         box.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => {
           await PUT('/tasks/' + b.dataset.done, { status: 'done' });
           UI.toast('已完成'); load();

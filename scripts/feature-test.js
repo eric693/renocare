@@ -188,6 +188,44 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   ok('工務看不到專案損益', (await req('GET', '/api/profit')).status === 403);
   ok('工務看得到工地日報', (await req('GET', `/api/site-logs?project_id=${pj.id}`)).status === 200);
 
+  console.log('\n搜尋與篩選');
+  await req('POST', '/api/logout');                                  // 上一段還是工務的身分
+  await req('POST', '/api/login', { username: 'admin', password: 'admin123' });
+  // 清單頁的搜尋不是裝飾：找不到那張單，使用者就會改用 Excel 自己記一份。
+  // 這裡驗「搜得到自己、搜不到別人」，避免哪天 SQL 改壞了變成永遠回全部。
+  const miss = encodeURIComponent('不存在的關鍵字');
+  const found = await req('GET', `/api/receivables?q=${encodeURIComponent(pj.code)}`);   // 案場代號是唯一的
+  eq('應收搜尋只留下相符的案子', found.body.rows.length, 1);
+  ok('應收合計跟著篩選走', found.body.sum.contract_total === found.body.rows[0].contract_total);
+  eq('應收搜尋沒有誤中', (await req('GET', `/api/receivables?q=${miss}`)).body.rows.length, 0);
+  ok('應收可以只看逾期', (await req('GET', '/api/receivables?bucket=overdue')).body.rows.every(r => r.overdue > 0));
+  const dfAll = (await req('GET', `/api/defects?project_id=${pj.id}`)).body;
+  if (dfAll.length) {
+    const kw = dfAll[0].item.slice(0, 2);
+    ok('缺失搜尋找得到', (await req('GET', `/api/defects?q=${encodeURIComponent(kw)}`)).body.some(d => d.id === dfAll[0].id));
+  } else ok('缺失搜尋找得到', true, '（這個案子沒有缺失，跳過）');
+  eq('缺失搜尋沒有誤中', (await req('GET', `/api/defects?q=${miss}`)).body.length, 0);
+  eq('工班搜尋沒有誤中', (await req('GET', `/api/vendors?q=${miss}`)).body.length, 0);
+  eq('待辦搜尋沒有誤中', (await req('GET', `/api/tasks?q=${miss}`)).body.length, 0);
+  eq('操作紀錄可依身分篩選',
+    (await req('GET', '/api/audit?actor_type=client')).body.every(r => r.actor_type === 'client'), true);
+
+  console.log('\n帳號刪除的三道防線');
+  const me = (await req('GET', '/api/users')).body.find(u => u.username === 'admin');
+  eq('不能刪除自己', (await req('DELETE', `/api/users/${me.id}`)).status, 400);
+  const tmp = (await req('POST', '/api/users',
+    { username: 'tmp_del_test', name: '暫時帳號', password: 'tmp123456' })).body.id;
+  const delFresh = await req('DELETE', `/api/users/${tmp}`);
+  ok('沒做過事的帳號可以真的刪掉', delFresh.status === 200 && delFresh.body.deactivated === false);
+  ok('刪掉之後就查不到', !(await req('GET', '/api/users')).body.some(u => u.id === tmp));
+  const designer = (await req('GET', '/api/users')).body.find(u => u.username === 'designer');
+  const delUsed = await req('DELETE', `/api/users/${designer.id}`);
+  ok('有歷史紀錄的帳號改成停用而不是刪除',
+    delUsed.status === 200 && delUsed.body.deactivated === true, delUsed.body && delUsed.body.message);
+  ok('停用後歷史紀錄還指得到這個人',
+    (await req('GET', '/api/users')).body.some(u => u.id === designer.id && !u.active));
+  await req('PUT', `/api/users/${designer.id}`, { active: 1 });   // 還原，不要污染示範資料
+
   console.log('\n清理測試資料');
   await req('POST', '/api/logout');
   await req('POST', '/api/login', { username: 'admin', password: 'admin123' });

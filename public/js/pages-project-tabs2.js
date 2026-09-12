@@ -64,6 +64,8 @@ async function subDetail(id, done) {
         ${stat(money(s.retention_held), '押著保留款')}
         ${stat(money(s.warranty_held), '押著保固金')}
       </div>
+      <div class="actions"><button class="btn small secondary" id="sb-print">列印發包單</button>
+        <button class="btn small secondary" id="sb-printval">列印估驗計價單</button></div>
       <div class="card">
         <div class="card-head"><h4>發包明細</h4>
           <span><button class="btn tiny" id="si-add">新增項目</button>
@@ -103,6 +105,66 @@ async function subDetail(id, done) {
 
   const bd = m.body;
   const refresh = () => { m.close(); done(); };
+
+  // 發包單要給工班簽，所以只印工作範圍、金額與保留款條件；不印公司的估價與毛利。
+  bd.querySelector('#sb-print').onclick = () => UI.print(`工程發包單　${s.no}`, `
+    <div class="kv">
+      <div><b>承攬工班</b>${UI.esc(s.vendor_name || '')}</div>
+      <div><b>工種</b>${UI.esc(s.trade || '')}</div>
+      <div><b>案場</b>${UI.esc(s.project_name || '')}（${UI.esc(s.project_code || '')}）</div>
+      <div><b>發包日</b>${UI.esc(s.sign_date || (s.created_at || '').slice(0, 10))}</div>
+      <div><b>預計進場</b>${UI.esc(s.start_date || '—')}</div>
+      <div><b>預計完成</b>${UI.esc(s.end_date || '—')}</div>
+    </div>
+    ${s.scope ? `<h2>工作範圍</h2><div class="note">${UI.esc(s.scope)}</div>` : ''}
+    <h2>發包明細</h2>
+    ${s.items.length
+      ? UI.ptable(['項目', '規格', '單位', '#數量', '#單價', '#金額'],
+        s.items.map(i => [UI.esc(i.name), UI.esc(i.spec || ''), UI.esc(i.unit),
+          i.qty, UI.fmtMoney(i.unit_price), UI.fmtMoney(i.amount)]))
+      : UI.ptable(['項目', '#金額'], [['工程總價（未分項）', UI.fmtMoney(s.amount)]])}
+    <div class="total">發包總價　${UI.fmtMoney(s.amount)}</div>
+    <h2>計價與付款條件</h2>
+    ${UI.ptable(['項目', '內容'], [
+      ['計價方式', '按累計完成比例估驗計價，本期金額＝累計金額 − 前期累計'],
+      ['保留款', `每期估驗扣 ${s.retention_pct}%，完工驗收合格後退還`],
+      ['保固保證金', `每期估驗扣 ${s.warranty_pct}%，保固期滿無缺失後退還`],
+      ['缺失求償', '經認定屬本工班責任之缺失，其改善費用得於估驗款中扣抵']
+    ])}
+    ${s.note ? `<h2>備註</h2><div class="note">${UI.esc(s.note)}</div>` : ''}
+    <div class="sign"><div>承攬工班簽章／日期</div><div>本公司代表／日期</div></div>`);
+
+  // 估驗計價單：工班每期請款時要的那張，本期算出來多少、扣了什麼要一條條列清楚。
+  bd.querySelector('#sb-printval').onclick = () => {
+    if (!s.valuations.length) { UI.toast('還沒有估驗紀錄', true); return; }
+    UI.print(`估驗計價單　${s.no}`, `
+      <div class="kv">
+        <div><b>承攬工班</b>${UI.esc(s.vendor_name || '')}</div>
+        <div><b>工種</b>${UI.esc(s.trade || '')}</div>
+        <div><b>案場</b>${UI.esc(s.project_name || '')}（${UI.esc(s.project_code || '')}）</div>
+        <div><b>發包總價</b>${UI.fmtMoney(s.amount)}</div>
+      </div>
+      <h2>各期估驗</h2>
+      ${UI.ptable(['期別', '估驗日', '#累計%', '#本期估驗', '#保留款', '#保固金', '#其他扣款', '#實付', '狀態'],
+        s.valuations.map(v => [UI.esc(v.period), UI.esc(v.date), v.cum_progress + '%',
+          UI.fmtMoney(v.gross_amount), '-' + UI.fmtMoney(v.retention), '-' + UI.fmtMoney(v.warranty_hold),
+          v.deduction ? '-' + UI.fmtMoney(v.deduction) : '—', UI.fmtMoney(v.net_amount),
+          twText(TW.val_status, v.status)]))}
+      <div class="total">累計估驗　${UI.fmtMoney(s.valued)}（完成 ${s.cum_progress}%）</div>
+      <div class="total">累計已付　${UI.fmtMoney(s.paid)}</div>
+      <div class="total">已確認待付　${UI.fmtMoney(s.unpaid)}</div>
+      <h2>目前押在本公司的金額</h2>
+      ${UI.ptable(['項目', '#金額'], [
+        ['保留款', UI.fmtMoney(s.retention_held)],
+        ['保固保證金', UI.fmtMoney(s.warranty_held)],
+        ['合計', UI.fmtMoney(s.retention_held + s.warranty_held)]
+      ])}
+      ${s.releases.length ? `<h2>已退還紀錄</h2>${UI.ptable(['日期', '種類', '#金額', '備註'],
+        s.releases.map(r => [UI.esc(r.date), twText(TW.release_kind, r.kind),
+          UI.fmtMoney(r.amount), UI.esc(r.note || '')]))}` : ''}
+      <div class="sign"><div>承攬工班簽收／日期</div><div>本公司代表／日期</div></div>`);
+  };
+
   bd.querySelector('#si-add').onclick = () => UI.modal({
     title: '新增發包明細',
     body: `<div class="form-grid">
@@ -236,12 +298,14 @@ function materialDialog(pid, row, schedule, done) {
 TABS.site = d => `
   <div class="card">
     <div class="card-head"><h3>工地日報</h3><button class="btn small" id="lg-add">填今日日報</button></div>
-    ${UI.table(['日期', '天氣', '出工', '工種', '進度', '狀況', '照片'], d.logs.map(l => `<tr>
+    ${UI.table(['日期', '天氣', '出工', '工種', '進度', '狀況', '照片', ''], d.logs.map(l => `<tr>
       <td class="nowrap">${UI.date(l.date)}</td><td>${UI.esc(l.weather || '—')}</td>
       <td class="num">${l.workers || '—'}</td><td class="muted">${UI.esc(l.trades || '')}</td>
       <td>${UI.esc(l.progress_note || '')}</td>
       <td class="${l.issue_note ? 'warn' : 'muted'}">${UI.esc(l.issue_note || '')}</td>
       <td class="num">${l.photo_count || 0}</td>
+      <td class="nowrap"><button class="btn tiny secondary" data-lgedit="${l.id}">編輯</button>
+        <button class="btn tiny secondary" data-lgdel="${l.id}">刪除</button></td>
     </tr>`), '還沒有日報')}
   </div>
   <div class="card">
@@ -252,26 +316,37 @@ TABS.site = d => `
       <figcaption>${UI.tag(twText(TW.photo_phase, p.phase), p.phase === 'defect' ? 'danger' : '')}
         ${UI.esc(p.taken_date)}<div>${UI.esc(p.caption || '')}</div>
         ${p.client_visible ? '' : '<div class="muted">（不給業主看）</div>'}
+        <button class="btn tiny secondary" data-phedit="${p.id}">編輯</button>
         <button class="btn tiny secondary" data-phdel="${p.id}">刪除</button></figcaption>
     </figure>`).join('')}</div>` : '<div class="empty">還沒有照片</div>'}
   </div>`;
 
 TABBIND.site = (el, d, reload) => {
   const pid = d.project.id;
-  el.querySelector('#lg-add').onclick = () => UI.modal({
-    title: '工地日報',
+  // 日報常常是隔天才補寫，寫錯日期或漏填工種是常態 —— 新增與編輯共用同一張表單
+  const logDialog = row => UI.modal({
+    title: row ? '編輯工地日報' : '工地日報',
     body: `<div class="form-grid">
-      ${UI.input('date', '日期', { type: 'date', value: UI.today() })}
-      ${UI.input('weather', '天氣', { value: '晴' })}
-      ${UI.input('workers', '出工人數', { type: 'number' })}
-      ${UI.checkList('trades', '今日進場工種', App.listOptions('trades'))}
-      ${UI.textarea('progress_note', '今日進度')}
-      ${UI.textarea('issue_note', '現場狀況／問題')}
+      ${UI.input('date', '日期', { type: 'date', value: row ? row.date : UI.today() })}
+      ${UI.input('weather', '天氣', { value: row ? row.weather : '晴' })}
+      ${UI.input('workers', '出工人數', { type: 'number', value: row ? row.workers : '' })}
+      ${UI.checkList('trades', '今日進場工種', App.listOptions('trades'), { value: row ? row.trades : '' })}
+      ${UI.textarea('progress_note', '今日進度', { value: row ? row.progress_note : '' })}
+      ${UI.textarea('issue_note', '現場狀況／問題', { value: row ? row.issue_note : '' })}
     </div>`,
     onSubmit: async bd => {
-      await POST('/site-logs', { ...UI.formData(bd), project_id: pid });
+      const v = UI.formData(bd);
+      if (row) await PUT('/site-logs/' + row.id, v);
+      else await POST('/site-logs', { ...v, project_id: pid });
       UI.toast('已儲存'); reload();
     }
+  });
+  el.querySelector('#lg-add').onclick = () => logDialog(null);
+  el.querySelectorAll('[data-lgedit]').forEach(b => b.onclick = () =>
+    logDialog(d.logs.find(x => String(x.id) === b.dataset.lgedit)));
+  el.querySelectorAll('[data-lgdel]').forEach(b => b.onclick = async () => {
+    if (!await UI.confirm('確定刪除這份日報？照片不會一起刪掉。')) return;
+    try { await DEL('/site-logs/' + b.dataset.lgdel); reload(); } catch (e) { UI.err(e); }
   });
   el.querySelector('#ph-add').onclick = () => UI.modal({
     title: '上傳現場照片',
@@ -295,6 +370,22 @@ TABBIND.site = (el, d, reload) => {
       UI.toast(`已上傳 ${files.length} 張`); reload();
     }
   });
+  // 照片本身不能換，但說明、階段、給不給業主看是常要改的
+  el.querySelectorAll('[data-phedit]').forEach(b => b.onclick = () => {
+    const ph = d.photos.find(x => String(x.id) === b.dataset.phedit);
+    UI.modal({
+      title: '編輯照片資訊',
+      body: `<div class="form-grid">
+        ${UI.select('phase', '階段', twOpts(TW.photo_phase), { value: ph.phase })}
+        ${UI.select('schedule_item_id', '對應工序',
+        [['', '不指定']].concat(d.schedule.map(s => [s.id, s.name])), { value: ph.schedule_item_id })}
+        ${UI.input('taken_date', '拍攝日期', { type: 'date', value: ph.taken_date })}
+        ${UI.input('caption', '說明', { value: ph.caption, full: true })}
+        ${UI.checkbox('client_visible', '業主端看得到', ph.client_visible, { full: true })}
+      </div>`,
+      onSubmit: async bd => { await PUT('/photos/' + ph.id, UI.formData(bd)); UI.toast('已儲存'); reload(); }
+    });
+  });
   el.querySelectorAll('[data-phdel]').forEach(b => b.onclick = async () => {
     if (!await UI.confirm('確定刪除這張照片？')) return;
     await DEL('/photos/' + b.dataset.phdel); reload();
@@ -317,7 +408,8 @@ TABS.quality = d => `
   r.status === 'verified' ? 'ok' : r.status === 'open' ? 'danger' : 'warn')}</td>
       <td class="num">${r.charge_vendor ? money(r.cost) : '—'}
         ${r.deducted_valuation_id ? '<div class="muted">已於估驗扣回</div>' : ''}</td>
-      <td class="nowrap"><button class="btn tiny secondary" data-dfedit="${r.id}">編輯</button></td>
+      <td class="nowrap"><button class="btn tiny secondary" data-dfedit="${r.id}">編輯</button>
+        <button class="btn tiny secondary" data-dfdel="${r.id}">刪除</button></td>
     </tr>`), '目前沒有缺失紀錄')}
   </div>
   <div class="card">
@@ -327,7 +419,8 @@ TABS.quality = d => `
       <td class="nowrap">${UI.date(w.start_date)}</td><td class="num">${w.months}</td>
       <td class="nowrap ${w.end_date && w.end_date < UI.today() ? 'muted' : ''}">${UI.date(w.end_date)}</td>
       <td class="nowrap"><button class="btn tiny secondary" data-wredit="${w.id}">編輯</button>
-        <button class="btn tiny" data-wrrep="${w.id}">報修</button></td>
+        <button class="btn tiny" data-wrrep="${w.id}">報修</button>
+        <button class="btn tiny secondary" data-wrdel="${w.id}">刪除</button></td>
     </tr>`), '還沒有保固項目。交屋日填好之後，這裡建立的保固會自動從交屋日起算。')}
   </div>`;
 
@@ -339,6 +432,14 @@ TABBIND.quality = (el, d, reload) => {
   el.querySelector('#wr-add').onclick = () => warrantyDialog(pid, null, reload);
   el.querySelectorAll('[data-wredit]').forEach(b => b.onclick = () =>
     warrantyDialog(pid, d.warranties.find(x => String(x.id) === b.dataset.wredit), reload));
+  el.querySelectorAll('[data-dfdel]').forEach(b => b.onclick = async () => {
+    if (!await UI.confirm('確定刪除這筆缺失？已在估驗中扣款的缺失不能刪。')) return;
+    try { await DEL('/defects/' + b.dataset.dfdel); reload(); } catch (e) { UI.err(e); }
+  });
+  el.querySelectorAll('[data-wrdel]').forEach(b => b.onclick = async () => {
+    if (!await UI.confirm('確定刪除這項保固？')) return;
+    try { await DEL('/warranties/' + b.dataset.wrdel); reload(); } catch (e) { UI.err(e); }
+  });
   el.querySelectorAll('[data-wrrep]').forEach(b => b.onclick = () => {
     const w = d.warranties.find(x => String(x.id) === b.dataset.wrrep);
     UI.modal({
@@ -504,7 +605,8 @@ TABS.cost = d => {
   const m = d.money;
   return `
   <div class="card">
-    <h3>成本組成</h3>
+    <div class="card-head"><h3>成本組成</h3>
+      ${App.can('profit') ? '<button class="btn small secondary" id="cost-bd">看成本結構</button>' : ''}</div>
     <div class="stat-grid">
       ${stat(money(m.sub_committed), '已發包', '', '', `其中草稿未發包 ${UI.fmtShort(m.sub_draft)}`)}
       ${stat(money(m.material_cost), '建材訂料')}
@@ -536,6 +638,12 @@ TABS.cost = d => {
 
 TABBIND.cost = (el, d, reload) => {
   const pid = d.project.id;
+  // 「超出估價」看得到卻不知道是哪個工種超的，這顆就是往下一層；
+  // 明細走 /profit API，沒有損益權限的人看不到這顆按鈕
+  const bdBtn = el.querySelector('#cost-bd');
+  if (bdBtn) bdBtn.onclick = async () => {
+    try { await costBreakdown(pid, d.project.name); } catch (e) { UI.err(e); }
+  };
   const dlg = row => UI.modal({
     title: row ? '編輯雜支' : '新增雜支',
     body: `<div class="form-grid">

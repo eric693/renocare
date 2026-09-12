@@ -8,7 +8,6 @@
     "dev": "node --watch src/server.js",
     "seed": "node scripts/seed.js",
     "test": "node scripts/feature-test.js",
-    "test:money": "node scripts/money-test.js",
     "test:ui": "node scripts/ui-test.js",
     "test:all": "node scripts/feature-test.js && node scripts/ui-test.js"
   },

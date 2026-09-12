@@ -26,11 +26,14 @@ function recalcChange(changeId) {
 }
 
 router.get('/changes', requireStaff('changes'), (req, res) => {
-  const { project_id = '', status = '' } = req.query;
+  const { project_id = '', status = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   res.json(db.prepare(`SELECT c.*, p.name AS project_name, p.code AS project_code, u.name AS created_by_name
     FROM change_orders c JOIN projects p ON p.id = c.project_id LEFT JOIN users u ON u.id = c.created_by
     WHERE (? = '' OR c.project_id = ?) AND (? = '' OR c.status = ?)
-    ORDER BY (c.status = 'sent') DESC, c.id DESC`).all(project_id, project_id, status, status));
+      AND (? = '' OR c.no LIKE ? OR c.title LIKE ? OR p.name LIKE ? OR p.code LIKE ?)
+    ORDER BY (c.status = 'sent') DESC, c.id DESC`)
+    .all(project_id, project_id, status, status, kw, like, like, like, like));
 });
 
 router.get('/changes/:id', requireStaff('changes'), (req, res) => {

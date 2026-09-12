@@ -97,13 +97,15 @@ const pickTask = picker(['project_id', 'title', 'detail', 'assignee_id', 'due_da
   'ref_type', 'ref_id'], ['project_id', 'assignee_id', 'ref_id']);
 
 router.get('/tasks', requireStaff('tasks'), (req, res) => {
-  const { assignee_id = '', status = '', project_id = '', mine = '' } = req.query;
+  const { assignee_id = '', status = '', project_id = '', mine = '', q = '' } = req.query;
   const uid = mine ? req.user.id : assignee_id;
+  const kw = String(q).trim(), like = `%${kw}%`;
   res.json(db.prepare(`SELECT t.*, u.name AS assignee_name, p.name AS project_name, p.code AS project_code
     FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN projects p ON p.id = t.project_id
     WHERE (? = '' OR t.assignee_id = ?) AND (? = '' OR t.status = ?) AND (? = '' OR t.project_id = ?)
+      AND (? = '' OR t.title LIKE ? OR t.detail LIKE ? OR p.name LIKE ? OR p.code LIKE ?)
     ORDER BY (t.status = 'done'), (t.due_date = ''), t.due_date, t.id DESC LIMIT 400`)
-    .all(uid, uid, status, status, project_id, project_id));
+    .all(uid, uid, status, status, project_id, project_id, kw, like, like, like, like));
 });
 
 router.post('/tasks', requireStaff('tasks'), (req, res) => {
@@ -134,13 +136,16 @@ router.delete('/tasks/:id', requireStaff('tasks'), (req, res) => {
 // 不用等結案、不用等發票。
 
 router.get('/profit', requireStaff('profit'), (req, res) => {
-  const { status = '', designer_id = '', month = '' } = req.query;
+  const { status = '', designer_id = '', month = '', q = '' } = req.query;
+  const kw = String(q).trim(), like = `%${kw}%`;
   const rows = db.prepare(`SELECT p.*, c.name AS customer_name, u.name AS designer_name
     FROM projects p LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN users u ON u.id = p.designer_id
     WHERE (? = '' OR p.status = ?) AND (? = '' OR p.designer_id = ?)
       AND (? = '' OR substr(p.sign_date,1,7) = ?)
+      AND (? = '' OR p.name LIKE ? OR p.code LIKE ? OR c.name LIKE ?)
       AND p.status <> 'lead' AND p.status <> 'lost'
-    ORDER BY p.id DESC`).all(status, status, designer_id, designer_id, month, month);
+    ORDER BY p.id DESC`)
+    .all(status, status, designer_id, designer_id, month, month, kw, like, like, like);
   const out = [];
   const sum = {
     contract_total: 0, change_signed: 0, cost_committed: 0, sub_committed: 0,

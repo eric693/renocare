@@ -36,8 +36,8 @@ scripts/feature-test.js 端到端測試
 
 ```bash
 npm start &        # 兩種測試都會打本機 API
-npm test           # 後端端到端：52 項
-npm run test:ui    # 前端冒煙：jsdom 把整個 SPA 跑一遍，逐頁渲染，50 項
+npm test           # 後端端到端：66 項
+npm run test:ui    # 前端冒煙：jsdom 把整個 SPA 跑一遍，逐頁渲染，66 項
 npm run test:all   # 兩個一起跑
 ```
 
