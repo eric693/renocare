@@ -71,14 +71,21 @@ function ok(name, cond, extra = '') {
 
   console.log('\n逐頁渲染');
   const keys = App.navGroups.flatMap(g => g.keys).filter(k => App.pages[k]);
+  const noHelp = [];
   for (const key of keys) {
     errors.length = 0;
     try {
       await App.go(key);
       const b = bad();
       ok(`${key}（${App.pages[key].title}）`, !b && !errors.length, b || errors[0] || '');
+      // 每一頁都要有「? 操作說明」，而且要說得出步驟 —— 新增頁面時最容易漏的就是這個
+      const help = App.pages[key].help;
+      if (!win.document.querySelector('#help-box') || !help || !(help.steps && help.steps.length)) {
+        noHelp.push(`${key}${!help ? '（沒有說明）' : '（沒有操作步驟）'}`);
+      }
     } catch (e) { ok(`${key}（${App.pages[key].title}）`, false, e.message); }
   }
+  ok(`${keys.length} 頁都有「? 操作說明」與操作步驟`, noHelp.length === 0, noHelp.join('、'));
 
   console.log('\n案場詳情的各分頁');
   const projects = await (await win.fetch('/api/projects')).json();

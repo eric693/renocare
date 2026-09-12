@@ -11,7 +11,7 @@
 //   3. 圖示等靜態資源走 cache-first，那些東西不會變。
 //
 // 改版時把 VERSION 加一，舊快取會在啟用時清掉。
-const VERSION = 'renocare-v6';
+const VERSION = 'renocare-v7';
 const SHELL = `${VERSION}-shell`;
 const ASSETS = `${VERSION}-assets`;
 
