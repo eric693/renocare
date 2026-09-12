@@ -113,6 +113,10 @@ app.use('/api', (req, res) => res.status(404).json({ error: '找不到此 API' }
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  // 上傳被擋（格式、大小、張數）是使用者能自己處理的事，要回 400 並說清楚原因，
+  // 不能混在 500「系統發生錯誤」裡 —— 那會讓人以為是系統壞了而放棄上傳。
+  const msg = require('./upload').uploadErrorMessage(err);
+  if (msg) return res.status(400).json({ error: msg });
   console.error(err);
   res.status(500).json({ error: '系統發生錯誤，請稍後再試' });
 });

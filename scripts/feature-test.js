@@ -29,6 +29,19 @@ function req(method, path, body) {
   });
 }
 
+// 上傳走 multipart，跟其他 API 不同，所以另外包一支
+function upload(path, fields, files) {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.append(k, String(v));
+  for (const [field, name, buf] of files) fd.append(field, new Blob([buf]), name);
+  return fetch(`http://127.0.0.1:${PORT}${path}`, { method: 'POST', headers: { Cookie: cookie }, body: fd })
+    .then(async r => ({ status: r.status, body: await r.json().catch(() => null) }));
+}
+
+// 最小的合法 PNG，不必在 repo 裡放二進位測試檔
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489'
+  + '0000000a49444154789c6360000002000154a24f5f0000000049454e44ae426082', 'hex');
+
 function ok(name, cond, extra = '') {
   if (cond) { pass++; console.log('  ✓ ' + name); }
   else { fail++; console.log('  ✗ ' + name + (extra ? '　' + extra : '')); }
@@ -187,6 +200,79 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   await req('POST', '/api/login', { username: 'foreman', password: 'work123' });
   ok('工務看不到專案損益', (await req('GET', '/api/profit')).status === 403);
   ok('工務看得到工地日報', (await req('GET', `/api/site-logs?project_id=${pj.id}`)).status === 200);
+
+  console.log('\n上傳檔案與照片');
+  // 隱蔽工程沒拍到照，日後的責任歸屬就是幾萬到幾十萬。所以上傳這條路徑
+  // 從存檔、讀回、改資訊、刪除到「刪檔案」都要驗，錯誤訊息也要看得懂。
+  const up1 = await upload('/api/photos',
+    { project_id: pj.id, phase: 'before', caption: '拆除前原況', client_visible: 1 },
+    [['files', '工地照 前.png', PNG], ['files', 'IMG_1234.JPG', PNG]]);
+  eq('一次上傳兩張照片', up1.status, 200);
+  ok('回傳兩個照片 id', up1.body && up1.body.ids && up1.body.ids.length === 2);
+  const photos = (await req('GET', `/api/photos?project_id=${pj.id}`)).body
+    .filter(p => up1.body.ids.includes(p.id));
+  eq('照片讀得回來', photos.length, 2);
+  ok('中文檔名換成不可猜的亂數（業主端沒有帳號，檔名就是保護）',
+    photos.every(p => /^\/uploads\/[0-9a-f]{32}\.(png|jpg)$/.test(p.url)), photos[0].url);
+  const fileRes = await fetch(`http://127.0.0.1:${PORT}${photos[0].url}`);
+  eq('上傳的檔案真的取得到', fileRes.status, 200);
+  ok('回傳的是圖片', String(fileRes.headers.get('content-type')).startsWith('image/'));
+
+  await req('PUT', `/api/photos/${photos[0].id}`, { caption: '改過的說明', phase: 'hidden', client_visible: 0 });
+  const edited = (await req('GET', `/api/photos?project_id=${pj.id}`)).body.find(p => p.id === photos[0].id);
+  ok('照片資訊改得動', edited.caption === '改過的說明' && edited.phase === 'hidden' && !edited.client_visible);
+
+  // 被擋下來的三種情況都要回 400 並說人話，不能是 500「系統發生錯誤」
+  const badType = await upload('/api/photos', { project_id: pj.id }, [['files', '工地錄影.mov', PNG]]);
+  eq('不支援的格式回 400', badType.status, 400);
+  ok('訊息指名是哪個檔、能傳什麼', /工地錄影\.mov/.test(badType.body.error) && /\.heic/.test(badType.body.error),
+    badType.body && badType.body.error);
+  const tooBig = await upload('/api/photos', { project_id: pj.id },
+    [['files', 'big.jpg', Buffer.alloc(26 * 1024 * 1024)]]);
+  eq('超過單檔上限回 400', tooBig.status, 400);
+  ok('訊息說得出上限是多少', /25MB/.test(tooBig.body.error), tooBig.body && tooBig.body.error);
+  eq('沒選檔回 400', (await upload('/api/photos', { project_id: pj.id }, [])).status, 400);
+
+  // 缺失照片：點交拍一張、改善後拍一張，複驗與求償靠的就是這個
+  const dfList = (await req('GET', `/api/defects?project_id=${pj.id}`)).body;
+  if (dfList.length) {
+    const df = dfList[0];
+    const up2 = await upload('/api/photos',
+      { project_id: pj.id, defect_id: df.id, phase: 'defect' }, [['files', 'df.png', PNG]]);
+    eq('缺失可以附照片', up2.status, 200);
+    eq('照片查得到是哪一筆缺失的', (await req('GET', `/api/photos?defect_id=${df.id}`)).body.length, 1);
+    eq('缺失清單的照片張數跟著動',
+      (await req('GET', `/api/defects?project_id=${pj.id}`)).body.find(x => x.id === df.id).photo_count, 1);
+    await req('DELETE', `/api/photos/${up2.body.ids[0]}`);
+  } else ok('缺失可以附照片', true, '（沒有缺失，跳過）');
+
+  // 圖面：同名上傳會讓舊版退位，現行版本永遠只有一個
+  const dw1 = await upload('/api/drawings',
+    { project_id: pj.id, name: '平面配置圖', category: '平面圖', client_visible: 1 },
+    [['file', '平面配置圖.pdf', Buffer.from('%PDF-1.4\n%%EOF')]]);
+  eq('圖面上傳成功', dw1.status, 200);
+  const dw2 = await upload('/api/drawings',
+    { project_id: pj.id, name: '平面配置圖', category: '平面圖', client_visible: 1 },
+    [['file', '平面配置圖v2.pdf', Buffer.from('%PDF-1.4\n%%EOF')]]);
+  const dws = (await req('GET', `/api/drawings?project_id=${pj.id}`)).body.filter(d => d.name === '平面配置圖');
+  eq('同一張圖只有一個現行版本', dws.filter(d => d.is_current).length, 1);
+  ok('現行版本是新上傳的那一版', dws.find(d => d.is_current).id === dw2.body.id);
+  eq('圖面擋掉非圖非 PDF',
+    (await upload('/api/drawings', { project_id: pj.id, name: 'x' }, [['file', 'x.exe', PNG]])).status, 400);
+
+  // 刪除要連磁碟上的檔案一起收掉，不然工地照片會把硬碟塞爆
+  const gone = photos[1].url;
+  await req('DELETE', `/api/photos/${photos[1].id}`);
+  await new Promise(r => setTimeout(r, 120));
+  eq('刪照片連檔案一起刪掉', (await fetch(`http://127.0.0.1:${PORT}${gone}`)).status, 404);
+
+  // 業主端：只看得到勾了「業主可見」的照片與圖面
+  const clink = (await req('POST', `/api/projects/${pj.id}/client-link`)).body;
+  const cv = await fetch(`http://127.0.0.1:${PORT}/api/client/${clink.client_token || clink.token}`);
+  const cdata = await cv.json();
+  ok('業主端看不到標為不可見的照片', !cdata.photos.some(p => p.caption === '改過的說明'),
+    `業主端 ${cdata.photos.length} 張`);
+  ok('業主端看得到可見的圖面', cdata.drawings.some(d => d.name === '平面配置圖'));
 
   console.log('\n搜尋與篩選');
   await req('POST', '/api/logout');                                  // 上一段還是工務的身分

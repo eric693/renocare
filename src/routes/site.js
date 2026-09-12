@@ -54,16 +54,16 @@ router.delete('/site-logs/:id', requireStaff('sitelog'), (req, res) => {
 // ---- 照片 ----
 
 router.get('/photos', requireStaff('sitelog'), (req, res) => {
-  const { project_id = '', phase = '', schedule_item_id = '', date_from = '', date_to = '' } = req.query;
+  const { project_id = '', phase = '', schedule_item_id = '', date_from = '', date_to = '', defect_id = '' } = req.query;
   res.json(db.prepare(`SELECT ph.*, si.name AS schedule_name, u.name AS created_by_name
     FROM photos ph LEFT JOIN schedule_items si ON si.id = ph.schedule_item_id
     LEFT JOIN users u ON u.id = ph.created_by
     WHERE (? = '' OR ph.project_id = ?) AND (? = '' OR ph.phase = ?)
-      AND (? = '' OR ph.schedule_item_id = ?)
+      AND (? = '' OR ph.schedule_item_id = ?) AND (? = '' OR ph.defect_id = ?)
       AND (? = '' OR ph.taken_date >= ?) AND (? = '' OR ph.taken_date <= ?)
     ORDER BY ph.taken_date DESC, ph.id DESC LIMIT 500`)
     .all(project_id, project_id, phase, phase, schedule_item_id, schedule_item_id,
-      date_from, date_from, date_to, date_to));
+      defect_id, defect_id, date_from, date_from, date_to, date_to));
 });
 
 router.post('/photos', requireStaff('sitelog'), upload.array('files', 20), (req, res) => {

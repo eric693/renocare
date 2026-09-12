@@ -477,7 +477,53 @@ function defectDialog(pid, row, done) {
       ${UI.input('cost', '改善成本', { type: 'number', value: row ? row.cost : 0 })}
       ${UI.checkbox('charge_vendor', '向工班求償（估驗時可一併扣款）', row ? row.charge_vendor : 0)}
       ${UI.textarea('note', '備註', { value: row ? row.note : '' })}
+    </div>
+    <div class="card" id="df-photos">
+      <div class="card-head"><h4>缺失照片</h4>
+        ${row ? '<label class="btn tiny secondary">加照片<input type="file" id="df-ph" accept="image/*" multiple hidden></label>' : ''}</div>
+      <div class="muted">${row
+        ? '點交當下拍一張、改善完再拍一張 —— 複驗與向工班求償靠的就是這兩張。'
+        : '先按儲存把缺失建起來，再開回來加照片。'}</div>
+      <div id="df-ph-list"></div>
     </div>`,
+    onOpen: async el => {
+      if (!row) return;
+      const list = el.querySelector('#df-ph-list');
+      const load = async () => {
+        const photos = await GET(`/photos?defect_id=${row.id}`).catch(() => []);
+        list.innerHTML = photos.length
+          ? `<div class="photo-grid">${photos.map(p => `<figure>
+              <a href="${UI.esc(p.url)}" target="_blank" rel="noopener"><img src="${UI.esc(p.url)}" loading="lazy" alt=""></a>
+              <figcaption>${UI.esc(p.taken_date)}<div>${UI.esc(p.caption || '')}</div>
+                <button class="btn tiny secondary" data-dfphdel="${p.id}" type="button">刪除</button></figcaption>
+            </figure>`).join('')}</div>`
+          : '<div class="empty">還沒有照片</div>';
+        list.querySelectorAll('[data-dfphdel]').forEach(b => b.onclick = async () => {
+          if (!await UI.confirm('確定刪除這張照片？')) return;
+          try { await DEL('/photos/' + b.dataset.dfphdel); load(); } catch (e) { UI.err(e); }
+        });
+      };
+      const input = el.querySelector('#df-ph');
+      input.onchange = async () => {
+        if (!input.files.length) return;
+        const fd = new FormData();
+        for (const f of input.files) fd.append('files', f);
+        // 綁定 defect_id 並固定標成缺失照片，這樣現場照片牆上也分得出來哪些是缺失
+        fd.append('project_id', pid);
+        fd.append('defect_id', row.id);
+        fd.append('phase', 'defect');
+        fd.append('taken_date', UI.today());
+        fd.append('caption', `${row.location || ''}${row.item || ''}`.slice(0, 40));
+        fd.append('client_visible', 1);
+        try {
+          const r = await api('/photos', { method: 'POST', body: fd });
+          UI.toast(`已上傳 ${r.ids.length} 張`);
+        } catch (e) { UI.err(e); }
+        input.value = '';
+        load();
+      };
+      await load();
+    },
     onSubmit: async el => {
       const v = UI.formData(el);
       if (row) await PUT('/defects/' + row.id, v);
