@@ -65,6 +65,7 @@ function ok(name, cond, extra = '') {
     if (!b) return '沒有 page-body';
     const t = b.textContent.trim();
     if (t === '載入中...') return '停在載入中';
+    if (b.querySelector('.page-error')) return '頁面出錯：' + t.slice(0, 60);
     if (/^(找不到|系統發生錯誤|操作失敗|請先登入)/.test(t)) return '錯誤訊息：' + t.slice(0, 40);
     return '';
   };
@@ -138,6 +139,103 @@ function ok(name, cond, extra = '') {
     ok('成本結構', !!mask && tables >= 3 && !!mask.querySelector('svg'), `表格 ${tables} 張`);
     mask && mask.remove();
   } catch (e) { ok('成本結構', false, e.message); }
+
+  const tick = (ms = 400) => new Promise(r => setTimeout(r, ms));
+  const closeModals = () => win.document.querySelectorAll('.modal-mask').forEach(m => m.remove());
+  const topModal = () => { const ms = [...win.document.querySelectorAll('.modal-mask')]; return ms[ms.length - 1]; };
+
+  // 這五頁曾經因為沒傳分頁代碼而整頁顯示錯誤訊息，舊的檢查比對不到那種訊息 —— 這裡直接要求畫出案場標頭
+  console.log('\n選案場的頁面：內容、篩選與清除');
+  for (const key of ['schedule', 'sitelog', 'subcontracts', 'billing', 'drawings']) {
+    const t = App.pages[key].title;
+    errors.length = 0;
+    try {
+      await App.go(`${key}?project_id=${pj.id}`);
+      const b = bad();
+      ok(`${t}：畫出案場內容`, !b && !!body().querySelector('.scope-head') && !errors.length, b || errors[0] || '沒有案場標頭');
+      const fields = body().querySelectorAll('.filter-bar [data-f]').length;
+      ok(`${t}：案場之外還有篩選欄位`, fields >= 3, `只有 ${fields} 個`);
+      const q = body().querySelector('.filter-bar [data-f="q"]');
+      if (!q) { ok(`${t}：有搜尋欄`, false); continue; }
+      q.value = '不存在的關鍵字zz';
+      q.closest('.filter-bar').dispatchEvent(new win.Event('change'));
+      await tick();
+      ok(`${t}：篩選後有提示且不出錯`, !!body().querySelector('#fl-clear') && !bad() && !errors.length,
+        bad() || errors[0] || '沒有篩選提示');
+      const rows = body().querySelectorAll('tbody tr, .photo-grid figure').length;
+      ok(`${t}：不相符的資料被濾掉`, rows === 0, `還剩 ${rows} 列`);
+      body().querySelector('#fl-clear').click();
+      await tick();
+      ok(`${t}：清除篩選`, !body().querySelector('#fl-clear') && body().querySelector('[data-f="q"]').value === '');
+    } catch (e) { ok(t, false, e.message); }
+  }
+
+  await App.go('customers');
+  ok('客戶名單有來源篩選', !!body().querySelector('[data-f="source"]'));
+
+  // 每個「編輯」按鈕都要打得開、帶得出欄位。示範資料沒有對應項目時明講跳過，不要默默算通過
+  console.log('\n編輯對話框');
+  const skip = name => console.log(`  - ${name}（示範資料沒有可編輯的項目，跳過）`);
+  const checkEdit = async (name, title, open) => {
+    errors.length = 0;
+    try {
+      const btn = await open();
+      if (!btn) { skip(name); return; }
+      btn.click();
+      await tick();
+      const m = topModal();
+      const h = m ? m.querySelector('h3').textContent : '';
+      ok(name, h.includes(title) && m.querySelectorAll('input,select,textarea').length > 0 && !errors.length,
+        errors[0] || h || '沒有對話框');
+    } catch (e) { ok(name, false, e.message); }
+    closeModals();
+  };
+  const details = [];
+  for (const p of projects) details.push(await (await win.fetch(`/api/projects/${p.id}/detail`)).json());
+  const withData = pred => details.find(pred);
+
+  await checkEdit('編輯收款', '編輯收款', async () => {
+    const d = withData(x => x.receipts.length);
+    if (!d) return null;
+    await App.go(`billing?project_id=${d.project.id}`);
+    return body().querySelector('[data-rcedit]');
+  });
+  await checkEdit('編輯圖面', '編輯圖面', async () => {
+    const d = withData(x => x.drawings.length);
+    if (!d) return null;
+    await App.go(`drawings?project_id=${d.project.id}`);
+    return body().querySelector('[data-dwedit]');
+  });
+  const subs = await (await win.fetch('/api/subcontracts')).json();
+  const openSub = async s => {
+    await App.go(`subcontracts?project_id=${s.project_id}`);
+    body().querySelector(`[data-sbopen="${s.id}"]`).click();
+    await tick();
+  };
+  await checkEdit('編輯發包明細', '編輯發包明細', async () => {
+    const s = subs.find(x => x.items.length);
+    if (!s) return null;
+    await openSub(s);
+    return topModal().querySelector('[data-siedit]');
+  });
+  await checkEdit('編輯估驗', '編輯估驗', async () => {
+    const s = subs.find(x => x.valuations.length && x.valuations[x.valuations.length - 1].status !== 'paid');
+    if (!s) return null;
+    await openSub(s);
+    return topModal().querySelector('[data-vaedit]');
+  });
+  // 示範資料的變更單多半已簽認（不能改明細），所以臨時開一張草稿來測，測完刪掉
+  const json = (url, method, data) => win.fetch(url, {
+    method, headers: { 'Content-Type': 'application/json' }, body: data ? JSON.stringify(data) : undefined
+  }).then(r => r.json());
+  const tmpCo = await json('/api/changes', 'POST', { project_id: pj.id, title: '冒煙測試暫存變更單', reason: 'client' });
+  await json(`/api/changes/${tmpCo.id}/items`, 'POST', { kind: 'add', name: '測試項目', qty: 1, unit_price: 100 });
+  await checkEdit('編輯變更明細', '編輯變更明細', async () => {
+    await win.changeDetail(tmpCo.id, () => {});
+    await tick();
+    return topModal().querySelector('[data-ciedit]');
+  });
+  await json(`/api/changes/${tmpCo.id}`, 'DELETE');
 
   console.log('\n匯出與列印');
   // CSV 的轉義與 BOM 是「Excel 打開會不會變亂碼／欄位會不會跑掉」的唯一保障

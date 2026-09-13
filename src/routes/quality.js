@@ -194,6 +194,33 @@ router.post('/drawings/:id/release', requireStaff('drawings'), (req, res) => {
   res.json({ ok: true });
 });
 
+// 檔案本身不能換（換檔就是出新版），但名稱、分類、版次、給不給業主看、備註是常要改的。
+// 圖面名稱是「同一張圖」的判斷依據，所以改名要整組版本一起改，否則舊版會變成另一張沒有現行版的圖。
+router.put('/drawings/:id', requireStaff('drawings'), (req, res) => {
+  const d = get('drawings', req.params.id);
+  if (!d) return res.status(404).json({ error: '找不到此圖面' });
+  const b = picker(['name', 'category', 'version', 'client_visible', 'note'], ['client_visible'])(req.body || {});
+  if (b.name !== undefined && !b.name) return res.status(400).json({ error: '請填圖面名稱' });
+  if (b.version !== undefined && !b.version) return res.status(400).json({ error: '請填版次' });
+  const name = b.name !== undefined ? b.name : d.name;
+  if (name !== d.name) {
+    const clash = db.prepare('SELECT COUNT(*) AS n FROM drawings WHERE project_id = ? AND name = ?').get(d.project_id, name).n;
+    if (clash) return res.status(400).json({ error: `這個案子已經有一張「${name}」，改成同名會把兩張圖的版本混在一起` });
+  }
+  if (b.version !== undefined && b.version !== d.version) {
+    const dup = db.prepare('SELECT COUNT(*) AS n FROM drawings WHERE project_id = ? AND name = ? AND version = ? AND id <> ?')
+      .get(d.project_id, d.name, b.version, d.id).n;
+    if (dup) return res.status(400).json({ error: `「${d.name}」已經有 ${b.version} 這個版次` });
+  }
+  delete b.name;
+  db.transaction(() => {
+    update('drawings', d.id, b);
+    if (name !== d.name) db.prepare('UPDATE drawings SET name = ? WHERE project_id = ? AND name = ?').run(name, d.project_id, d.name);
+  })();
+  audit('staff', req.user.id, req.user.name, '修改圖面', `${d.name} ${d.version}`, name !== d.name ? `改名為 ${name}` : '');
+  res.json({ ok: true });
+});
+
 router.delete('/drawings/:id', requireStaff('drawings'), (req, res) => {
   const d = get('drawings', req.params.id);
   if (!d) return res.status(404).json({ error: '找不到此圖面' });

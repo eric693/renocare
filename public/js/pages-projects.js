@@ -5,16 +5,19 @@ App.page('customers', {
     intro: '客戶資料只填一次，之後開案場、開估價單、印報價單、業主端都從這裡帶。',
     steps: ['新增客戶 → 姓名與電話是必要的，統編與地址可以成交後再補。',
       '「來源」請確實選 —— 半年後你會想知道賺錢的案子都是從哪裡來的。',
-      '承接欄會自動統計這位客戶的案數與累計合約金額，舊客回頭時看這個。'],
+      '承接欄會自動統計這位客戶的案數與累計合約金額，舊客回頭時看這個。',
+      '用上方的「來源」篩選，看某個管道帶來多少客戶；搜尋吃姓名、電話、地址。'],
     notes: ['已經有案場的客戶刪不掉，避免案子變成沒有業主。']
   },
   title: '客戶名單',
   sub: '業主資料、來源與承接紀錄',
   module: 'customers',
   async render(el) {
-    const state = { q: '' };
-    const bar = App.filterBar([{ name: 'q', label: '搜尋', placeholder: '姓名／電話／地址' }],
-      v => { Object.assign(state, v); load(); });
+    const state = { source: '', q: '' };
+    const bar = App.filterBar([
+      { name: 'source', label: '來源', type: 'select', options: [['', '全部來源']].concat(App.listOptions('customer_sources')) },
+      { name: 'q', label: '搜尋', placeholder: '姓名／電話／地址' }
+    ], v => { Object.assign(state, v); load(); });
     el.innerHTML = '';
     el.appendChild(bar);
     const act = document.createElement('div');

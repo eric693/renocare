@@ -122,7 +122,8 @@ async function changeDetail(id, done) {
           <td>${UI.esc(i.unit)}</td><td class="num">${i.qty}</td>
           <td class="num">${UI.fmtMoney(i.unit_price)}</td>
           <td class="num ${i.amount < 0 ? 'danger' : ''}">${UI.fmtMoney(i.amount)}</td>
-          <td>${editable ? `<button class="btn tiny secondary" data-cidel="${i.id}">刪</button>` : ''}</td>
+          <td class="nowrap">${editable ? `<button class="btn tiny secondary" data-ciedit="${i.id}">編輯</button>
+            <button class="btn tiny secondary" data-cidel="${i.id}">刪</button>` : ''}</td>
         </tr>`), '還沒有明細')}
       </div>
       <div class="modal-foot" style="justify-content:flex-start;flex-wrap:wrap;gap:8px">
@@ -140,20 +141,28 @@ async function changeDetail(id, done) {
   const refresh = () => { m.close(); done && done(); };
   const q = s => bd.querySelector(s);
 
-  q('#ci-add') && (q('#ci-add').onclick = () => UI.modal({
-    title: '新增變更明細', wide: true,
+  // 單價一律存正數，方向看「類型」，所以編輯時直接帶回原值即可
+  const itemDialog = row => UI.modal({
+    title: row ? '編輯變更明細' : '新增變更明細', wide: true,
     body: `<div class="form-grid">
-      ${UI.select('kind', '類型', twOpts(TW.change_kind), { value: 'add' })}
-      ${UI.select('category', '類別', [['', '未分類']].concat(App.listOptions('trades')))}
-      ${UI.input('name', '項目', { required: true })}
-      ${UI.input('spec', '規格說明', { full: true })}
-      ${UI.input('unit', '單位', { value: '式' })}
-      ${UI.input('qty', '數量', { type: 'number', step: '0.01', value: 1 })}
-      ${UI.input('unit_price', '對客單價', { type: 'number' })}
-      ${UI.input('unit_cost', '成本單價', { type: 'number' })}
+      ${UI.select('kind', '類型', twOpts(TW.change_kind), { value: row ? row.kind : 'add' })}
+      ${UI.select('category', '類別', [['', '未分類']].concat(App.listOptions('trades')), { value: row ? row.category : '' })}
+      ${UI.input('name', '項目', { required: true, value: row ? row.name : '' })}
+      ${UI.input('spec', '規格說明', { full: true, value: row ? row.spec : '' })}
+      ${UI.input('unit', '單位', { value: row ? row.unit : '式' })}
+      ${UI.input('qty', '數量', { type: 'number', step: '0.01', value: row ? row.qty : 1 })}
+      ${UI.input('unit_price', '對客單價', { type: 'number', value: row ? row.unit_price : '' })}
+      ${UI.input('unit_cost', '成本單價', { type: 'number', value: row ? row.unit_cost : '' })}
     </div><div class="muted">選「減帳」時金額會自動存成負數，單價照正數填就好。</div>`,
-    onSubmit: async el => { await POST(`/changes/${id}/items`, UI.formData(el)); refresh(); changeDetail(id, done); }
-  }));
+    onSubmit: async el => {
+      if (row) await PUT('/change-items/' + row.id, UI.formData(el));
+      else await POST(`/changes/${id}/items`, UI.formData(el));
+      refresh(); changeDetail(id, done);
+    }
+  });
+  q('#ci-add') && (q('#ci-add').onclick = () => itemDialog(null));
+  bd.querySelectorAll('[data-ciedit]').forEach(b => b.onclick = () =>
+    itemDialog(c.items.find(x => String(x.id) === b.dataset.ciedit)));
   bd.querySelectorAll('[data-cidel]').forEach(b => b.onclick = async () => {
     await DEL('/change-items/' + b.dataset.cidel);
     m.close(); changeDetail(id, done);

@@ -217,7 +217,8 @@ const App = {
       Charts.mount(el);
       if (readonly) App.lockPage(el);
     }
-    catch (e) { document.getElementById('page-body').innerHTML = `<div class="empty">${UI.esc(e.message)}</div>`; }
+    // page-error 讓冒煙測試認得出「這頁其實炸了」，不必去猜錯誤訊息長什麼樣
+    catch (e) { document.getElementById('page-body').innerHTML = `<div class="empty page-error">${UI.esc(e.message)}</div>`; }
   },
 
   helpKey(key) { return 'help_open_' + key; },

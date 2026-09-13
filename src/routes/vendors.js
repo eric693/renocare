@@ -77,6 +77,14 @@ function subDetail(id) {
   if (!s) return null;
   s.items = db.prepare('SELECT * FROM sub_items WHERE subcontract_id = ? ORDER BY id').all(id);
   s.valuations = db.prepare('SELECT * FROM valuations WHERE subcontract_id = ? ORDER BY id').all(id);
+  // 扣款欄存的是「手填扣款＋缺失求償」的合計，編輯表單要拆回手填的那一部分
+  for (const v of s.valuations) {
+    const ds = db.prepare('SELECT * FROM defects WHERE deducted_valuation_id = ?').all(v.id);
+    const auto = new Set(ds.map(defectNote));
+    v.defect_deduction = ds.reduce((a, d) => a + d.cost, 0);
+    v.manual_deduction = v.deduction - v.defect_deduction;
+    v.manual_note = v.deduct_note.split('；').filter(x => x && !auto.has(x)).join('；');
+  }
   s.releases = db.prepare('SELECT * FROM retention_releases WHERE subcontract_id = ? ORDER BY id').all(id);
   const nd = s.valuations.filter(v => v.status !== 'draft');
   s.valued = nd.reduce((a, v) => a + v.gross_amount, 0);
@@ -168,9 +176,44 @@ router.post('/subcontracts/:id/items', requireStaff('subcontracts'), (req, res) 
   res.json({ id, amount: get('subcontracts', s.id).amount });
 });
 
+// 發包總價不能改到低於已估驗金額，否則累計％會超過 100、保留款也對不起來
+function valuedAmount(subId) {
+  return db.prepare("SELECT COALESCE(SUM(gross_amount),0) AS v FROM valuations WHERE subcontract_id = ? AND status <> 'draft'").get(subId).v;
+}
+
+function belowValued(subId, newTotal) {
+  const valued = valuedAmount(subId);
+  return newTotal < valued
+    ? `已估驗 ${valued.toLocaleString('zh-TW')} 元，發包總價改完會變成 ${newTotal.toLocaleString('zh-TW')} 元，不能低於已估驗金額`
+    : null;
+}
+
+router.put('/sub-items/:id', requireStaff('subcontracts'), (req, res) => {
+  const row = get('sub_items', req.params.id);
+  if (!row) return res.status(404).json({ error: '找不到此明細' });
+  const b = req.body || {};
+  const i = picker(['name', 'spec', 'unit', 'note'])(b);
+  if (i.name !== undefined && !i.name) return res.status(400).json({ error: '請填項目名稱' });
+  i.qty = b.qty !== undefined ? Number(b.qty) || 0 : row.qty;
+  i.unit_price = b.unit_price !== undefined ? Math.round(Number(b.unit_price) || 0) : row.unit_price;
+  i.amount = lineAmount(i.qty, i.unit_price);
+  const total = db.prepare('SELECT COALESCE(SUM(amount),0) AS v FROM sub_items WHERE subcontract_id = ?')
+    .get(row.subcontract_id).v - row.amount + i.amount;
+  const bad = belowValued(row.subcontract_id, total);
+  if (bad) return res.status(400).json({ error: bad });
+  update('sub_items', row.id, i);
+  recalcSub(row.subcontract_id);
+  res.json({ ok: true, amount: get('subcontracts', row.subcontract_id).amount });
+});
+
 router.delete('/sub-items/:id', requireStaff('subcontracts'), (req, res) => {
   const row = get('sub_items', req.params.id);
   if (!row) return res.status(404).json({ error: '找不到此明細' });
+  const rest = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS v FROM sub_items WHERE subcontract_id = ? AND id <> ?')
+    .get(row.subcontract_id, row.id);
+  // 刪到一筆不剩時單頭金額維持原值（見 recalcSub），只有還剩明細時總價才會變小
+  const bad = rest.n ? belowValued(row.subcontract_id, rest.v) : null;
+  if (bad) return res.status(400).json({ error: bad });
   remove('sub_items', row.id);
   recalcSub(row.subcontract_id);
   res.json({ ok: true });
@@ -183,7 +226,7 @@ router.put('/subcontracts/:id/amount', requireStaff('subcontracts'), (req, res) 
   const n = db.prepare('SELECT COUNT(*) AS n FROM sub_items WHERE subcontract_id = ?').get(s.id).n;
   if (n) return res.status(400).json({ error: '這張單有明細，總價由明細加總，請改明細' });
   const amount = Math.round(Number(req.body.amount) || 0);
-  const valued = db.prepare("SELECT COALESCE(SUM(gross_amount),0) AS v FROM valuations WHERE subcontract_id = ? AND status <> 'draft'").get(s.id).v;
+  const valued = valuedAmount(s.id);
   if (amount < valued) return res.status(400).json({ error: `已估驗 ${valued.toLocaleString('zh-TW')} 元，總價不能低於它` });
   db.prepare('UPDATE subcontracts SET amount = ? WHERE id = ?').run(amount, s.id);
   res.json({ ok: true });
@@ -221,7 +264,7 @@ router.post('/subcontracts/:id/valuations', requireStaff('subcontracts'), (req, 
     const d = get('defects', did);
     if (!d || d.deducted_valuation_id) continue;
     deduction += d.cost;
-    notes.push(`${d.location}${d.item} ${d.cost}`);
+    notes.push(defectNote(d));
   }
   const net = gross - retention - warranty - deduction;
   if (net < 0) return res.status(400).json({ error: '扣款金額大於本期估驗，實付會變成負數，請確認' });
@@ -244,6 +287,57 @@ router.post('/subcontracts/:id/valuations', requireStaff('subcontracts'), (req, 
   else if (s.status === 'signed') db.prepare("UPDATE subcontracts SET status = 'working' WHERE id = ?").run(s.id);
   audit('staff', req.user.id, req.user.name, '估驗計價', s.no, `累計 ${cum}%，本期 ${gross}，實付 ${net}`);
   res.json({ id, gross, retention, warranty_hold: warranty, deduction, net });
+});
+
+// 缺失求償寫進扣款說明的格式；編輯估驗時要靠它把自動產生的說明與手填的分開
+function defectNote(d) { return `${d.location}${d.item} ${d.cost}`; }
+
+// 改估驗：只能改最後一期、還沒付款的。金額照新增時的規則整個重算，
+// 已經扣回的缺失求償維持綁在這一期，不會因為改了％就被漏扣或重扣。
+router.put('/valuations/:id', requireStaff('subcontracts'), (req, res) => {
+  const v = get('valuations', req.params.id);
+  if (!v) return res.status(404).json({ error: '找不到此估驗單' });
+  if (v.status === 'paid') return res.status(400).json({ error: '已付款的估驗單不能修改' });
+  const last = db.prepare('SELECT MAX(id) AS v FROM valuations WHERE subcontract_id = ?').get(v.subcontract_id).v;
+  if (last !== v.id) return res.status(400).json({ error: '只能修改最後一期，否則後面各期的本期金額會對不上' });
+  const s = get('subcontracts', v.subcontract_id);
+  const b = req.body || {};
+  const cum = b.cum_progress !== undefined ? Number(b.cum_progress) : v.cum_progress;
+  if (!(cum >= 0 && cum <= 100)) return res.status(400).json({ error: '累計完成％要在 0 到 100 之間' });
+  const prior = db.prepare('SELECT COALESCE(SUM(gross_amount),0) AS v FROM valuations WHERE subcontract_id = ? AND id <> ?')
+    .get(s.id, v.id).v;
+  const cumAmount = Math.round(s.amount * cum / 100);
+  const gross = cumAmount - prior;
+  if (gross < 0) {
+    return res.status(400).json({ error: `累計 ${cum}% 換算 ${cumAmount.toLocaleString('zh-TW')} 元，低於前期已估驗的 ${prior.toLocaleString('zh-TW')} 元` });
+  }
+  const ds = db.prepare('SELECT * FROM defects WHERE deducted_valuation_id = ?').all(v.id);
+  const defectCost = ds.reduce((a, d) => a + d.cost, 0);
+  const oldManual = v.deduction - defectCost;
+  const manual = b.deduction !== undefined ? Math.round(Number(b.deduction) || 0) : oldManual;
+  const retention = Math.round(gross * (s.retention_pct || 0) / 100);
+  const warranty = Math.round(gross * (s.warranty_pct || 0) / 100);
+  const deduction = manual + defectCost;
+  const net = gross - retention - warranty - deduction;
+  if (net < 0) return res.status(400).json({ error: '扣款金額大於本期估驗，實付會變成負數，請確認' });
+  const auto = new Set(ds.map(defectNote));
+  const oldNote = v.deduct_note.split('；').filter(x => x && !auto.has(x)).join('；');
+  const note = b.deduct_note !== undefined ? String(b.deduct_note).trim() : oldNote;
+
+  update('valuations', v.id, {
+    period: b.period !== undefined ? String(b.period).trim() || v.period : v.period,
+    date: b.date !== undefined ? String(b.date).trim() || v.date : v.date,
+    cum_progress: cum, cum_amount: cumAmount, gross_amount: gross,
+    retention, warranty_hold: warranty, deduction,
+    deduct_note: [note, ...ds.map(defectNote)].filter(Boolean).join('；'),
+    net_amount: net,
+    note: b.note !== undefined ? String(b.note).trim() : v.note
+  });
+  // 改到 100% 就標完工；從 100% 改回來的，完工標記也要撤掉，否則會跳出「該退保留款」的誤報
+  if (cum >= 100 && s.status !== 'settled') db.prepare("UPDATE subcontracts SET status = 'done' WHERE id = ?").run(s.id);
+  else if (cum < 100 && s.status === 'done') db.prepare("UPDATE subcontracts SET status = 'working' WHERE id = ?").run(s.id);
+  audit('staff', req.user.id, req.user.name, '修改估驗', s.no, `累計 ${v.cum_progress}% → ${cum}%，實付 ${v.net_amount} → ${net}`);
+  res.json({ gross, retention, warranty_hold: warranty, deduction, net });
 });
 
 router.post('/valuations/:id/pay', requireStaff('subcontracts'), (req, res) => {

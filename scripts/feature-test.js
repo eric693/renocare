@@ -176,6 +176,82 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   eq('成本＝發包 100000 ＋ 雜支 10000', det.money.cost_committed, 110000);
   eq('毛利＝162000 − 110000', det.money.gross_profit, 52000);
 
+  console.log('\n修改發包明細與估驗：打錯可以改，但帳要對得起來');
+  // 另開一張發包單，不動上面那張已經驗過數字的
+  const sc2 = (await req('POST', '/api/subcontracts', {
+    project_id: pj.id, vendor_id: vd, trade: '木作', retention_pct: 10, warranty_pct: 5, status: 'signed'
+  })).body;
+  const it1 = (await req('POST', `/api/subcontracts/${sc2.id}/items`, { name: '櫃體', unit: '尺', qty: 10, unit_price: 5000 })).body;
+  const it2 = (await req('POST', `/api/subcontracts/${sc2.id}/items`, { name: '天花', unit: '坪', qty: 10, unit_price: 5000 })).body;
+  eq('明細加總成發包總價', it2.amount, 100000);
+  let ed = await req('PUT', `/api/sub-items/${it1.id}`, { name: '櫃體', unit: '尺', qty: 12, unit_price: 5000, amount: 1 });
+  eq('改明細後總價重算（不吃前端送的金額）', ed.body.amount, 110000);
+  const va = (await req('POST', `/api/subcontracts/${sc2.id}/valuations`, { cum_progress: 50 })).body;
+  eq('第一期估驗', va.gross, 55000);
+  ed = await req('PUT', `/api/sub-items/${it1.id}`, { qty: 1, unit_price: 1000 });
+  ok('明細改到總價低於已估驗被擋下', ed.status === 400, ed.body && ed.body.error);
+  ed = await req('DELETE', `/api/sub-items/${it1.id}`);
+  ok('刪明細讓總價低於已估驗被擋下', ed.status === 400, ed.body && ed.body.error);
+  eq('被擋下的修改沒有動到總價', (await req('GET', `/api/subcontracts/${sc2.id}`)).body.amount, 110000);
+
+  const vb = (await req('POST', `/api/subcontracts/${sc2.id}/valuations`,
+    { cum_progress: 80, deduction: 1000, deduct_note: '清潔費' })).body;
+  eq('第二期估驗', vb.gross, 33000);
+  ed = await req('PUT', `/api/valuations/${va.id}`, { cum_progress: 60 });
+  ok('不是最後一期不能改', ed.status === 400, ed.body && ed.body.error);
+  ed = await req('PUT', `/api/valuations/${vb.id}`, { cum_progress: 90 });
+  eq('改累計％後本期重算（99000 − 55000）', ed.body.gross, 44000);
+  eq('保留款跟著重算', ed.body.retention, 4400);
+  eq('沒送扣款欄位就沿用原本的其他扣款', ed.body.deduction, 1000);
+  eq('實付＝44000 − 4400 − 2200 − 1000', ed.body.net, 36400);
+  let subEdit = (await req('GET', `/api/subcontracts/${sc2.id}`)).body;
+  eq('累計估驗跟著改', subEdit.valued, 99000);
+  eq('押著的保留款跟著改', subEdit.retention_held, 5500 + 4400);
+  eq('手填的扣款說明保留下來', subEdit.valuations[1].manual_note, '清潔費');
+  ed = await req('PUT', `/api/valuations/${vb.id}`, { cum_progress: 40 });
+  ok('改到低於前期累計被擋下', ed.status === 400, ed.body && ed.body.error);
+  await req('PUT', `/api/valuations/${vb.id}`, { cum_progress: 100 });
+  eq('改到 100% 標完工', (await req('GET', `/api/subcontracts/${sc2.id}`)).body.status, 'done');
+  await req('PUT', `/api/valuations/${vb.id}`, { cum_progress: 90 });
+  eq('從 100% 改回來撤掉完工標記', (await req('GET', `/api/subcontracts/${sc2.id}`)).body.status, 'working');
+
+  // 缺失求償扣在這一期：改％或改手填扣款都不能把它弄丟，也不能讓它重複
+  const dfx = (await req('POST', '/api/defects', {
+    project_id: pj.id, item: '門片刮傷', vendor_id: vd, cost: 3000, charge_vendor: 1, status: 'verified'
+  })).body;
+  const vc = (await req('POST', `/api/subcontracts/${sc2.id}/valuations`,
+    { cum_progress: 95, deduction: 500, defect_ids: String(dfx.id) })).body;
+  eq('第三期含缺失求償的扣款', vc.deduction, 3500);
+  ed = await req('PUT', `/api/valuations/${vc.id}`, { cum_progress: 100, deduction: 0, deduct_note: '' });
+  eq('改掉手填扣款，缺失求償仍然扣著', ed.body.deduction, 3000);
+  eq('缺失求償沒有跑回待扣清單',
+    (await req('GET', `/api/subcontracts/${sc2.id}/deductions`)).body.some(x => x.id === dfx.id), false);
+  subEdit = (await req('GET', `/api/subcontracts/${sc2.id}`)).body;
+  ok('缺失求償的說明還在', subEdit.valuations[2].deduct_note.includes('門片刮傷'), subEdit.valuations[2].deduct_note);
+  await req('POST', `/api/valuations/${vc.id}/pay`, {});
+  ed = await req('PUT', `/api/valuations/${vc.id}`, { cum_progress: 90 });
+  ok('已付款的估驗不能改', ed.status === 400, ed.body && ed.body.error);
+
+  console.log('\n修改收款與變更明細');
+  det = (await req('GET', `/api/projects/${pj.id}/detail`)).body;
+  const rc0 = det.receipts.find(r => r.milestone_id === ms[0].id);
+  await req('PUT', `/api/receipts/${rc0.id}`, { ...rc0, amount: 30000 });
+  det = (await req('GET', `/api/projects/${pj.id}/detail`)).body;
+  eq('收款改少了，節點退回已請款', det.money.milestones[0].status, 'invoiced');
+  eq('未收金額跟著出來', det.money.milestones[0].outstanding, 6000);
+  await req('PUT', `/api/receipts/${rc0.id}`, { ...rc0, amount: 36000 });
+  eq('改回來節點又結清',
+    (await req('GET', `/api/projects/${pj.id}/detail`)).body.money.milestones[0].status, 'paid');
+
+  const coEdit = (await req('POST', '/api/changes', { project_id: pj.id, title: '明細修改測試', reason: 'client' })).body;
+  const ciEdit = (await req('POST', `/api/changes/${coEdit.id}/items`, { kind: 'add', name: '層板', qty: 2, unit_price: 3000 })).body;
+  await req('PUT', `/api/change-items/${ciEdit.id}`, { kind: 'deduct', name: '層板', qty: 3, unit_price: 3000 });
+  eq('明細改成減帳後金額變負數', (await req('GET', `/api/changes/${coEdit.id}`)).body.amount, -9000);
+  const signedItem = (await req('GET', `/api/changes/${co.id}`)).body.items[0];
+  eq('已簽認的變更明細不能改',
+    (await req('PUT', `/api/change-items/${signedItem.id}`, { kind: 'add', name: '偷改', qty: 1, unit_price: 1 })).status, 400);
+  await req('DELETE', `/api/changes/${coEdit.id}`);
+
   console.log('\n業主端');
   const link = (await req('POST', `/api/projects/${pj.id}/client-link`)).body;
   const cl = await req('GET', `/api/client/${link.token}`);
@@ -273,6 +349,25 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   eq('圖面擋掉非圖非 PDF',
     (await upload('/api/drawings', { project_id: pj.id, name: 'x' }, [['file', 'x.exe', PNG]])).status, 400);
 
+  // 圖面資訊可以改；改名要整組版本一起改，不能改成別張圖的名字、也不能撞版次
+  const cur = dws.find(d => d.is_current);
+  const old = dws.find(d => !d.is_current);
+  eq('版次不能跟同一張圖的其他版本重複',
+    (await req('PUT', `/api/drawings/${cur.id}`, { version: old.version })).status, 400);
+  await req('PUT', `/api/drawings/${cur.id}`, { name: '平面圖改名', category: '施工圖', version: cur.version, client_visible: 1 });
+  let dwAfter = (await req('GET', `/api/drawings?project_id=${pj.id}`)).body;
+  eq('改名連同舊版一起改', dwAfter.filter(d => d.name === '平面圖改名').length, 2);
+  eq('改名後仍然只有一個現行版', dwAfter.filter(d => d.name === '平面圖改名' && d.is_current).length, 1);
+  eq('分類只改這一版', dwAfter.find(d => d.id === old.id).category, '平面圖');
+  const dw3 = await upload('/api/drawings', { project_id: pj.id, name: '水電圖' },
+    [['file', '水電圖.pdf', Buffer.from('%PDF-1.4\n%%EOF')]]);
+  eq('不能改成同案另一張圖的名字',
+    (await req('PUT', `/api/drawings/${dw3.body.id}`, { name: '平面圖改名' })).status, 400);
+  await req('DELETE', `/api/drawings/${dw3.body.id}`);
+  await req('PUT', `/api/drawings/${cur.id}`, { name: '平面配置圖' });
+  dwAfter = (await req('GET', `/api/drawings?project_id=${pj.id}`)).body;
+  eq('改回原名', dwAfter.filter(d => d.name === '平面配置圖').length, 2);
+
   // 刪除要連磁碟上的檔案一起收掉，不然工地照片會把硬碟塞爆
   const gone = photos[1].url;
   await req('DELETE', `/api/photos/${photos[1].id}`);
@@ -305,6 +400,11 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   } else ok('缺失搜尋找得到', true, '（這個案子沒有缺失，跳過）');
   eq('缺失搜尋沒有誤中', (await req('GET', `/api/defects?q=${miss}`)).body.length, 0);
   eq('工班搜尋沒有誤中', (await req('GET', `/api/vendors?q=${miss}`)).body.length, 0);
+  const srcCust = (await req('POST', '/api/customers', { name: '來源篩選測試', source: '測試來源甲' })).body.id;
+  const bySource = (await req('GET', `/api/customers?source=${encodeURIComponent('測試來源甲')}`)).body;
+  ok('客戶可依來源篩選', bySource.length === 1 && bySource[0].id === srcCust, `回來 ${bySource.length} 筆`);
+  eq('客戶來源篩選沒有誤中', (await req('GET', `/api/customers?source=${miss}`)).body.length, 0);
+  await req('DELETE', `/api/customers/${srcCust}`);
   eq('待辦搜尋沒有誤中', (await req('GET', `/api/tasks?q=${miss}`)).body.length, 0);
   eq('操作紀錄可依身分篩選',
     (await req('GET', '/api/audit?actor_type=client')).body.every(r => r.actor_type === 'client'), true);

@@ -54,13 +54,15 @@ TABS.money = d => {
   <div class="card">
     <div class="card-head"><h3>收款紀錄</h3><button class="btn small" id="rc-add">登錄收款</button></div>
     ${UI.table(['日期', '金額', '方式', '對應節點', '發票', '備註', ''], d.receipts.map(r => {
-      const ms = m.milestones.find(x => x.id === r.milestone_id);
+      // 篩選時節點清單只剩部分，節點名稱要從完整清單找，不然會被誤標成追加款
+      const ms = (d.allMilestones || m.milestones).find(x => x.id === r.milestone_id);
       return `<tr><td class="nowrap">${UI.date(r.date)}</td>
         <td class="num">${money(r.amount)}</td><td>${UI.esc(r.method)}</td>
         <td>${ms ? UI.esc(ms.name) : '<span class="muted">追加／其他款</span>'}</td>
         <td class="muted">${UI.esc(r.invoice_no || '')}</td>
         <td class="muted">${UI.esc(r.note || '')}</td>
-        <td><button class="btn tiny secondary" data-rcdel="${r.id}">刪除</button></td></tr>`;
+        <td class="nowrap"><button class="btn tiny secondary" data-rcedit="${r.id}">編輯</button>
+          <button class="btn tiny secondary" data-rcdel="${r.id}">刪除</button></td></tr>`;
     }), '還沒有收款紀錄')}
     ${m.change_unbilled ? `<div class="notice warn">已簽認的追加還有 ${money(m.change_unbilled)} 沒收到。
       追加款不在請款節點裡，登錄收款時「對應節點」留空即可。</div>` : ''}
@@ -136,6 +138,8 @@ TABBIND.money = (el, d, reload) => {
   el.querySelectorAll('[data-rcv]').forEach(b => b.onclick = () =>
     receiptDialog(pid, d, Number(b.dataset.rcv), reload));
   el.querySelector('#rc-add').onclick = () => receiptDialog(pid, d, null, reload);
+  el.querySelectorAll('[data-rcedit]').forEach(b => b.onclick = () =>
+    receiptDialog(pid, d, null, reload, d.receipts.find(x => String(x.id) === b.dataset.rcedit)));
   el.querySelectorAll('[data-rcdel]').forEach(b => b.onclick = async () => {
     if (!await UI.confirm('確定刪除這筆收款？')) return;
     await DEL('/receipts/' + b.dataset.rcdel); reload();
@@ -187,23 +191,25 @@ function milestoneDialog(pid, row, d, done) {
   });
 }
 
-function receiptDialog(pid, d, msId, done) {
+// 收款日、金額、發票號碼打錯是常態 —— 新增與編輯共用同一張表單，改完節點的已收狀態由後端重算
+function receiptDialog(pid, d, msId, done, row) {
   const ms = d.money.milestones.find(x => x.id === msId);
   UI.modal({
-    title: '登錄收款',
+    title: row ? '編輯收款' : '登錄收款',
     body: `<div class="form-grid">
       ${UI.select('milestone_id', '對應請款節點',
       [['', '追加款／其他（不對應節點）']].concat(d.money.milestones.map(x => [x.id, `${x.name}（未收 ${money(x.outstanding)}）`])),
-      { value: msId || '' })}
-      ${UI.input('date', '收款日', { type: 'date', value: UI.today() })}
-      ${UI.input('amount', '金額', { type: 'number', value: ms ? ms.outstanding : '' })}
-      ${UI.select('method', '方式', App.listOptions('payment_methods', ['匯款']), { value: '匯款' })}
-      ${UI.input('invoice_no', '發票號碼', {})}
-      ${UI.textarea('note', '備註', {})}
+      { value: row ? (row.milestone_id || '') : (msId || '') })}
+      ${UI.input('date', '收款日', { type: 'date', value: row ? row.date : UI.today() })}
+      ${UI.input('amount', '金額', { type: 'number', value: row ? row.amount : (ms ? ms.outstanding : '') })}
+      ${UI.select('method', '方式', App.listOptions('payment_methods', ['匯款']), { value: row ? row.method : '匯款' })}
+      ${UI.input('invoice_no', '發票號碼', { value: row ? row.invoice_no : '' })}
+      ${UI.textarea('note', '備註', { value: row ? row.note : '' })}
     </div>`,
     onSubmit: async el => {
-      await POST('/receipts', { ...UI.formData(el), project_id: pid });
-      UI.toast('已登錄'); done();
+      if (row) await PUT('/receipts/' + row.id, UI.formData(el));
+      else await POST('/receipts', { ...UI.formData(el), project_id: pid });
+      UI.toast(row ? '已儲存' : '已登錄'); done();
     }
   });
 }

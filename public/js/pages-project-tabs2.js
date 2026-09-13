@@ -53,6 +53,8 @@ function subDialog(pid, row, done) {
 async function subDetail(id, done) {
   const s = await GET('/subcontracts/' + id);
   const dedu = await GET(`/subcontracts/${id}/deductions`).catch(() => []);
+  // 只有最後一期可以改或刪：中間某期一動，後面各期「累計減前期」算出來的本期金額就全錯了
+  const lastVal = s.valuations.length ? s.valuations[s.valuations.length - 1].id : null;
   const m = UI.modal({
     title: `${s.vendor_name || '發包單'} — ${s.no}`, wide: true, hideFooter: true,
     body: `<div id="sb-body">
@@ -74,7 +76,8 @@ async function subDetail(id, done) {
           <td>${UI.esc(i.name)}<div class="muted">${UI.esc(i.spec || '')}</div></td>
           <td>${UI.esc(i.unit)}</td><td class="num">${i.qty}</td>
           <td class="num">${money(i.unit_price)}</td><td class="num">${money(i.amount)}</td>
-          <td><button class="btn tiny secondary" data-sidel="${i.id}">刪</button></td></tr>`),
+          <td class="nowrap"><button class="btn tiny secondary" data-siedit="${i.id}">編輯</button>
+            <button class="btn tiny secondary" data-sidel="${i.id}">刪</button></td></tr>`),
       '沒有明細，總價直接輸入（小工程常見）')}
       </div>
       <div class="card">
@@ -89,6 +92,7 @@ async function subDetail(id, done) {
           <td class="num"><strong>${money(v.net_amount)}</strong></td>
           <td>${UI.tag(twText(TW.val_status, v.status), v.status === 'paid' ? 'ok' : 'warn')}</td>
           <td class="nowrap">${v.status === 'confirmed' ? `<button class="btn tiny" data-vapay="${v.id}">付款</button>` : ''}
+            ${v.status !== 'paid' && v.id === lastVal ? `<button class="btn tiny secondary" data-vaedit="${v.id}">編輯</button>` : ''}
             ${v.status !== 'paid' ? `<button class="btn tiny secondary" data-vadel="${v.id}">刪</button>` : ''}</td>
         </tr>`), '還沒有估驗紀錄')}
       </div>
@@ -165,13 +169,45 @@ async function subDetail(id, done) {
       <div class="sign"><div>承攬工班簽收／日期</div><div>本公司代表／日期</div></div>`);
   };
 
-  bd.querySelector('#si-add').onclick = () => UI.modal({
-    title: '新增發包明細',
+  const itemDialog = row => UI.modal({
+    title: row ? '編輯發包明細' : '新增發包明細',
     body: `<div class="form-grid">
-      ${UI.input('name', '項目', { required: true })}${UI.input('spec', '規格')}
-      ${UI.input('unit', '單位', { value: '式' })}${UI.input('qty', '數量', { type: 'number', step: '0.01', value: 1 })}
-      ${UI.input('unit_price', '單價', { type: 'number' })}</div>`,
-    onSubmit: async el => { await POST(`/subcontracts/${id}/items`, UI.formData(el)); refresh(); }
+      ${UI.input('name', '項目', { required: true, value: row ? row.name : '' })}${UI.input('spec', '規格', { value: row ? row.spec : '' })}
+      ${UI.input('unit', '單位', { value: row ? row.unit : '式' })}
+      ${UI.input('qty', '數量', { type: 'number', step: '0.01', value: row ? row.qty : 1 })}
+      ${UI.input('unit_price', '單價', { type: 'number', value: row ? row.unit_price : '' })}</div>
+      ${s.valued ? `<div class="muted">已估驗 ${money(s.valued)}，改完的發包總價不能低於這個數字。</div>` : ''}`,
+    onSubmit: async el => {
+      if (row) await PUT('/sub-items/' + row.id, UI.formData(el));
+      else await POST(`/subcontracts/${id}/items`, UI.formData(el));
+      refresh();
+    }
+  });
+  bd.querySelector('#si-add').onclick = () => itemDialog(null);
+  bd.querySelectorAll('[data-siedit]').forEach(b => b.onclick = () =>
+    itemDialog(s.items.find(x => String(x.id) === b.dataset.siedit)));
+  bd.querySelectorAll('[data-vaedit]').forEach(b => b.onclick = () => {
+    const v = s.valuations.find(x => String(x.id) === b.dataset.vaedit);
+    const prior = s.valuations.filter(x => x.id !== v.id).reduce((a, x) => a + x.gross_amount, 0);
+    UI.modal({
+      title: `編輯估驗 — ${v.period}`, wide: true,
+      body: `<p>一樣填<b>累計</b>完成％。前期已估驗 ${money(prior)}，本期金額、保留款與保固金會照新的％重算。</p>
+        <div class="form-grid">
+          ${UI.input('period', '期別', { value: v.period })}
+          ${UI.input('date', '估驗日', { type: 'date', value: v.date })}
+          ${UI.input('cum_progress', '累計完成％', { type: 'number', step: '0.1', value: v.cum_progress })}
+          ${UI.input('deduction', '其他扣款', { type: 'number', value: v.manual_deduction })}
+          ${UI.input('deduct_note', '扣款說明', { full: true, value: v.manual_note })}
+          ${UI.textarea('note', '備註', { value: v.note })}
+        </div>
+        ${v.defect_deduction ? `<div class="muted">這期另外扣回缺失求償 ${money(v.defect_deduction)}，會維持扣在這一期；
+          要取消求償請刪掉這期重做。</div>` : ''}`,
+      onSubmit: async el => {
+        const r = await PUT('/valuations/' + v.id, UI.formData(el));
+        UI.toast(`已儲存：本期估驗 ${money(r.gross)}，實付 ${money(r.net)}`);
+        refresh();
+      }
+    });
   });
   bd.querySelector('#si-amt') && (bd.querySelector('#si-amt').onclick = () => UI.modal({
     title: '直接輸入發包總價',
@@ -179,7 +215,8 @@ async function subDetail(id, done) {
     onSubmit: async el => { await PUT(`/subcontracts/${id}/amount`, UI.formData(el)); refresh(); }
   }));
   bd.querySelectorAll('[data-sidel]').forEach(b => b.onclick = async () => {
-    await DEL('/sub-items/' + b.dataset.sidel); refresh();
+    if (!await UI.confirm('確定刪除這項發包明細？發包總價會跟著減少。')) return;
+    try { await DEL('/sub-items/' + b.dataset.sidel); refresh(); } catch (e) { UI.err(e); }
   });
   bd.querySelector('#va-add').onclick = () => UI.modal({
     title: '估驗計價', wide: true,
@@ -566,6 +603,7 @@ TABS.docs = d => `
       <td>${w.client_visible ? '是' : '否'}</td>
       <td class="nowrap"><a class="btn tiny secondary" href="${UI.esc(w.url)}" target="_blank" rel="noopener">開啟</a>
         <button class="btn tiny" data-dwrel="${w.id}">發布</button>
+        <button class="btn tiny secondary" data-dwedit="${w.id}">編輯</button>
         <button class="btn tiny secondary" data-dwdel="${w.id}">刪除</button></td>
     </tr>`), '還沒有圖面')}
   </div>
@@ -609,6 +647,22 @@ TABBIND.docs = (el, d, reload) => {
     body: `<div class="form-grid">${UI.input('released_to', '發給哪些工班', { full: true, placeholder: '例：木作、水電' })}</div>`,
     onSubmit: async bd => { await POST(`/drawings/${b.dataset.dwrel}/release`, UI.formData(bd)); UI.toast('已記錄發布'); reload(); }
   }));
+  // 檔案不能換（換檔請上傳新版），這裡只改資訊
+  el.querySelectorAll('[data-dwedit]').forEach(b => b.onclick = () => {
+    const w = d.drawings.find(x => String(x.id) === b.dataset.dwedit);
+    UI.modal({
+      title: `編輯圖面 — ${w.name} ${w.version}`,
+      body: `<div class="form-grid">
+        ${UI.input('name', '圖面名稱', { required: true, value: w.name })}
+        ${UI.input('category', '分類', { value: w.category })}
+        ${UI.input('version', '版次', { required: true, value: w.version })}
+        ${UI.checkbox('client_visible', '業主端看得到', w.client_visible, { full: true })}
+        ${UI.textarea('note', '備註', { value: w.note })}
+      </div>
+      <div class="muted">圖面名稱是「同一張圖」的依據：改名會連同這張圖的所有版本一起改。要換檔案請用「上傳新版圖面」。</div>`,
+      onSubmit: async bd => { await PUT('/drawings/' + w.id, UI.formData(bd)); UI.toast('已儲存'); reload(); }
+    });
+  });
   el.querySelectorAll('[data-dwdel]').forEach(b => b.onclick = async () => {
     if (!await UI.confirm('確定刪除這個版本？')) return;
     await DEL('/drawings/' + b.dataset.dwdel); reload();

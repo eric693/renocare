@@ -13,6 +13,7 @@ const pickCustomer = picker(['name', 'phone', 'email', 'line_id', 'address', 'ta
 
 router.get('/customers', requireStaff('customers'), (req, res) => {
   const q = String(req.query.q || '').trim();
+  const source = String(req.query.source || '').trim();
   const like = `%${q}%`;
   res.json(db.prepare(`SELECT c.*,
       (SELECT COUNT(*) FROM projects p WHERE p.customer_id = c.id) AS project_count,
@@ -20,7 +21,8 @@ router.get('/customers', requireStaff('customers'), (req, res) => {
         WHERE p.customer_id = c.id AND ct.status = 'active') AS contract_amount
     FROM customers c
     WHERE (? = '' OR c.name LIKE ? OR c.phone LIKE ? OR c.address LIKE ?)
-    ORDER BY c.id DESC`).all(q, like, like, like));
+      AND (? = '' OR c.source = ?)
+    ORDER BY c.id DESC`).all(q, like, like, like, source, source));
 });
 
 router.post('/customers', requireStaff('customers'), (req, res) => {
