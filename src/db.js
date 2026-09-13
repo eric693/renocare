@@ -36,6 +36,15 @@ ensureColumns('defects', { deducted_valuation_id: 'INTEGER' });
 // 付給個人工班要代扣所得稅與二代健保補充保費；公司行號開發票不必。
 // 舊資料一律視為公司行號，實匯金額補成原本的應付金額。
 ensureColumns('vendors', { payee_type: "TEXT NOT NULL DEFAULT 'company'" });
+
+// 內政部室內裝修契約範本要留紀錄的事：審閱期、公司交給業主的保固保證金、完工後書面通知驗收
+ensureColumns('contracts', {
+  review_given_date: "TEXT NOT NULL DEFAULT ''",
+  warranty_bond_amount: 'INTEGER NOT NULL DEFAULT 0',
+  warranty_bond_date: "TEXT NOT NULL DEFAULT ''",
+  warranty_bond_returned_date: "TEXT NOT NULL DEFAULT ''"
+});
+ensureColumns('projects', { acceptance_notice_date: "TEXT NOT NULL DEFAULT ''" });
 for (const t of ['valuations', 'retention_releases']) {
   ensureColumns(t, {
     tax_withheld: 'INTEGER NOT NULL DEFAULT 0',
@@ -94,7 +103,17 @@ const DEFAULT_LISTS = {
   withhold_pct: '10',
   withhold_over: '20000',
   nhi_pct: '2.11',
-  nhi_from: '20000'
+  nhi_from: '20000',
+  // 範本：簽約前至少給業主 7 日審閱；驗收後公司交付不低於工程總價 5% 的保固保證金；
+  // 業主收到完工書面通知，應於翌日起 10 日內會同驗收
+  review_days: '7',
+  client_bond_pct: '5',
+  acceptance_days: '10',
+  // 公司證照：室內裝修業登記證、專業技術人員登記證（效期 5 年，逾期不得從事室內裝修），到期前開待辦
+  license_no: '',
+  license_expiry: '',
+  tech_certs: '',
+  license_alert_days: '60'
 };
 for (const [k, v] of Object.entries(DEFAULT_LISTS)) {
   if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(k) === undefined) setSetting(k, v);

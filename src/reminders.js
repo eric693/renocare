@@ -9,7 +9,7 @@
 //
 // 每一種提醒都用 (ref_type, ref_id) 去重，同一件事不會每天洗出一張新待辦。
 
-const { db, today, shiftDate, getSetting } = require('./db');
+const { db, today, shiftDate, addMonths, getSetting } = require('./db');
 const { milestoneAmount } = require('./finance');
 
 function ensureTask({ title, detail, assignee_id, due_date, priority, ref_type, ref_id, project_id }) {
@@ -125,6 +125,47 @@ function run() {
         assignee_id: d.owner_id || ownerOf(p), due_date: t, priority: 'normal'
       });
     }
+
+    // 9) 已書面通知驗收，業主逾期未會同（範本：通知送達翌日起 10 日內會同驗收）
+    if (p.acceptance_notice_date && !p.handover_date) {
+      const deadline = shiftDate(p.acceptance_notice_date, Number(getSetting('acceptance_days', '10')) || 10);
+      if (deadline && deadline < t) {
+        ensureTask({
+          project_id: p.id, ref_type: 'acceptance', ref_id: p.id,
+          title: `【業主逾期未驗收】${p.name}（期限 ${deadline}）`,
+          detail: '依室內裝修契約範本，業主無正當理由未於期限內會同驗收，經先後兩次書面催告仍未會同者，推定完成驗收。請保留催告的書面紀錄。',
+          assignee_id: ownerOf(p, 'designer'), due_date: t, priority: 'high'
+        });
+      }
+    }
+  }
+
+  // 10) 保固期滿，公司交給業主的保固保證金還沒取回（結案的案子也要追，所以不限在建案場）
+  for (const c of db.prepare(`SELECT c.*, p.name AS project_name, p.handover_date, p.warranty_months,
+        p.supervisor_id, p.designer_id
+      FROM contracts c JOIN projects p ON p.id = c.project_id
+      WHERE c.status = 'active' AND c.warranty_bond_amount > 0 AND c.warranty_bond_returned_date = ''
+        AND p.handover_date <> ''`).all()) {
+    const end = addMonths(c.handover_date, c.warranty_months || 12);
+    if (!end || end > t) continue;
+    ensureTask({
+      project_id: c.project_id, ref_type: 'bond', ref_id: c.id,
+      title: `【取回保固保證金】${c.project_name} — ${c.warranty_bond_amount.toLocaleString('zh-TW')} 元`,
+      detail: `保固已於 ${end} 期滿。依範本，保固責任解除且無待解決事項後，業主應無息退還。取回後在合約填「保固保證金取回日」。`,
+      assignee_id: c.designer_id || c.supervisor_id, due_date: t, priority: 'normal'
+    });
+  }
+
+  // 11) 公司證照到期：室內裝修業登記證、專業技術人員登記證逾期不得從事室內裝修
+  const licSoon = shiftDate(t, Number(getSetting('license_alert_days', '60')) || 60);
+  for (const lic of companyLicenses()) {
+    if (lic.expiry > licSoon) continue;
+    ensureTask({
+      ref_type: 'license', ref_id: lic.ref,
+      title: `【證照將到期】${lic.label}（${lic.expiry}）`,
+      detail: '逾期未換證不得從事室內裝修設計或施工，請提前辦理換證，換完到系統設定更新到期日。',
+      due_date: lic.expiry, priority: 'high'
+    });
   }
 
   // 7) 保固到期前回訪（到期前一個月）
@@ -155,4 +196,19 @@ function run() {
   }
 }
 
-module.exports = { run, ensureTask };
+// 系統設定裡的公司證照清單。日期格式不對的略過（寧可不提醒，也不要拿壞掉的字串去比大小）。
+// ref：登記證固定 1，專業技術人員依設定裡的順序 100 起跳，給待辦去重用。
+function companyLicenses() {
+  const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const out = [];
+  const exp = getSetting('license_expiry', '').trim();
+  const no = getSetting('license_no', '').trim();
+  if (isDate(exp)) out.push({ ref: 1, label: `室內裝修業登記證${no ? ' ' + no : ''}`, expiry: exp });
+  getSetting('tech_certs', '').split(',').map(s => s.trim()).filter(Boolean).forEach((s, i) => {
+    const [name = '', kind = '', expiry = ''] = s.split(':').map(x => x.trim());
+    if (isDate(expiry)) out.push({ ref: 100 + i, label: `${name} ${kind || '專業技術人員登記證'}`.trim(), expiry });
+  });
+  return out;
+}
+
+module.exports = { run, ensureTask, companyLicenses };

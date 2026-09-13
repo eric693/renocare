@@ -28,10 +28,11 @@ TABS.money = d => {
   <div class="card">
     <div class="card-head"><h3>合約</h3><button class="btn small" id="ct-add">新增合約</button></div>
     ${UI.table(['合約編號', '種類', '簽約日', '金額', '工期', '逾期罰款／日', ''], d.contracts.map(c => `<tr>
-      <td>${UI.esc(c.contract_no)}</td>
+      <td>${UI.esc(c.contract_no)}<div class="muted">${c.review_given_date ? `交付審閱 ${UI.esc(c.review_given_date)}` : '未記錄審閱日'}</div></td>
       <td>${twText(TW.quote_kind, c.kind)}</td>
       <td>${UI.date(c.sign_date)}</td>
-      <td class="num">${money(c.amount)}</td>
+      <td class="num">${money(c.amount)}${c.warranty_bond_amount ? `<div class="muted">保固保證金 ${money(c.warranty_bond_amount)}${
+        c.warranty_bond_returned_date ? '（已取回）' : ''}</div>` : ''}</td>
       <td>${c.work_days ? c.work_days + ' 天' : '—'}</td>
       <td class="num">${c.penalty_per_day ? money(c.penalty_per_day) : '<span class="muted">依範本千分之一</span>'}</td>
       <td class="nowrap"><button class="btn tiny secondary" data-ctedit="${c.id}">編輯</button>
@@ -40,6 +41,7 @@ TABS.money = d => {
     <div class="muted" style="margin-top:8px">已簽認追加減帳 ${money(m.change_signed)}，
       合約總價 <b>${money(m.contract_total)}</b></div>
     ${penaltyNotice(m)}
+    ${contractNotices(d)}
   </div>
 
   <div class="card">
@@ -160,6 +162,64 @@ function milestoneCapNotice(ms) {
     範本的尾款在驗收並取得室內裝修合格證明後才付，前面收太多，發生爭議時對公司不利。</div>` : '';
 }
 
+// 日期小工具：一律用 YYYY-MM-DD 字串進出，跟後端 db.js 的 shiftDate／addMonths 同一套規則
+const fmtDay = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+function dayAdd(d, n) {
+  const x = new Date(`${d}T00:00:00`);
+  if (isNaN(x)) return '';
+  x.setDate(x.getDate() + n);
+  return fmtDay(x);
+}
+function monthAdd(d, n) {
+  const x = new Date(`${d}T00:00:00`);
+  if (isNaN(x)) return '';
+  const day = x.getDate();
+  x.setMonth(x.getMonth() + n);
+  if (x.getDate() < day) x.setDate(0);
+  return fmtDay(x);
+}
+const daysBetween = (a, b) => Math.round((new Date(`${b}T00:00:00`) - new Date(`${a}T00:00:00`)) / 86400000);
+
+// 內政部室內裝修契約範本要留紀錄、發生爭議時拿得出來的事：審閱期、交給業主的保固保證金與取回
+function contractNotices(d) {
+  const def = (App.meta && App.meta.defaults) || {};
+  const reviewDays = def.review_days || 7, bondPct = def.client_bond_pct || 5;
+  const p = d.project, t = UI.today();
+  const active = (d.contracts || []).filter(c => c.status === 'active');
+  const out = [];
+  for (const c of active) {
+    if (!c.review_given_date) {
+      out.push(`合約 ${c.contract_no} 沒有記錄「交付業主審閱日」：範本要求簽約前至少給業主 ${reviewDays} 天審閱，發生爭議時要拿得出紀錄`);
+    } else if (c.sign_date && daysBetween(c.review_given_date, c.sign_date) < reviewDays) {
+      out.push(`合約 ${c.contract_no} 審閱期只有 ${daysBetween(c.review_given_date, c.sign_date)} 天，範本要求至少 ${reviewDays} 天；依消保法，未給足審閱期的條款業主可以主張不構成契約內容`);
+    }
+  }
+  if (active.length && p.handover_date && d.money.contract_total !== undefined) {
+    const bond = active.reduce((a, c) => a + (c.warranty_bond_amount || 0), 0);
+    const need = Math.round(d.money.contract_total * bondPct / 100);
+    if (bond < need) {
+      out.push(`已驗收交屋：範本約定公司交付保固保證金（不低於合約總價 ${bondPct}%，即 ${money(need)}）後請領尾款，目前記錄 ${money(bond)}`);
+    }
+    const end = monthAdd(p.handover_date, p.warranty_months || 12);
+    const unreturned = active.filter(c => c.warranty_bond_amount > 0 && !c.warranty_bond_returned_date)
+      .reduce((a, c) => a + c.warranty_bond_amount, 0);
+    if (end && end <= t && unreturned) out.push(`保固已於 ${end} 期滿，保固保證金 ${money(unreturned)} 還沒取回`);
+  }
+  return out.length ? `<div class="notice warn">${out.map(UI.esc).join('<br>')}</div>` : '';
+}
+
+// 完工後書面通知驗收：範本規定業主應於通知送達翌日起 10 日內會同驗收
+function acceptanceNotice(p) {
+  if (!p.acceptance_notice_date || p.handover_date) return '';
+  const days = ((App.meta && App.meta.defaults) || {}).acceptance_days || 10;
+  const deadline = dayAdd(p.acceptance_notice_date, days);
+  if (!deadline) return '';
+  return deadline < UI.today()
+    ? `<div class="notice warn">已於 ${UI.esc(p.acceptance_notice_date)} 書面通知驗收，業主逾期（${deadline}）未會同。
+        依範本，先後兩次書面催告仍未會同者推定完成驗收 —— 請保留催告紀錄；驗收完成後在案場填「交屋日」。</div>`
+    : `<div class="notice">已於 ${UI.esc(p.acceptance_notice_date)} 書面通知驗收，業主應於 <b>${deadline}</b> 前會同驗收。</div>`;
+}
+
 // 工期遲延違約金：業主可以主張的風險，不是已發生的成本（見 finance.js）
 function penaltyNotice(m) {
   if (!m || !m.penalty_amount) return '';
@@ -180,6 +240,10 @@ function contractDialog(pid, row, done) {
       ${UI.input('amount', '合約金額（含稅）', { type: 'number', value: row ? row.amount : '' })}
       ${UI.input('work_days', '約定工期（日曆天）', { type: 'number', value: row ? row.work_days : '' })}
       ${UI.input('penalty_per_day', '逾期違約金／日（留空＝依範本合約總價千分之一）', { type: 'number', value: row && row.penalty_per_day ? row.penalty_per_day : '' })}
+      ${UI.input('review_given_date', '交付業主審閱日（範本至少 7 天）', { type: 'date', value: row ? row.review_given_date : '' })}
+      ${UI.input('warranty_bond_amount', '交給業主的保固保證金', { type: 'number', value: row && row.warranty_bond_amount ? row.warranty_bond_amount : '' })}
+      ${UI.input('warranty_bond_date', '保固保證金交付日', { type: 'date', value: row ? row.warranty_bond_date : '' })}
+      ${UI.input('warranty_bond_returned_date', '保固保證金取回日', { type: 'date', value: row ? row.warranty_bond_returned_date : '' })}
       ${UI.textarea('note', '備註', { value: row ? row.note : '' })}
     </div>`,
     onSubmit: async el => {

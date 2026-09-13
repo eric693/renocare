@@ -2,7 +2,7 @@
 const express = require('express');
 const { db, audit, today, getSetting, shiftDate } = require('../db');
 const { requireStaff } = require('../auth');
-const { picker, insert, update, get, remove } = require('../crud');
+const { picker, insert, update, get, remove, fixInvoiceNo } = require('../crud');
 const { projectMoney, milestoneAmount } = require('../finance');
 
 const router = express.Router();
@@ -51,6 +51,8 @@ router.put('/milestones/:id', requireStaff('billing'), (req, res) => {
   if (!m) return res.status(404).json({ error: '找不到此節點' });
   const b = pickMs(req.body || {});
   delete b.project_id;
+  const badInv = fixInvoiceNo(b);
+  if (badInv) return res.status(400).json({ error: badInv });
   update('billing_milestones', m.id, b);
   res.json({ ok: true });
 });
@@ -62,8 +64,11 @@ router.post('/milestones/:id/invoice', requireStaff('billing'), (req, res) => {
   if (!m) return res.status(404).json({ error: '找不到此節點' });
   const date = String(req.body.invoiced_date || '').trim() || today();
   const due = String(req.body.due_date || '').trim() || shiftDate(date, Number(getSetting('alert_days', '7')) || 7);
+  const inv = { invoice_no: String(req.body.invoice_no || '').trim() };
+  const badInv = fixInvoiceNo(inv);
+  if (badInv) return res.status(400).json({ error: badInv });
   db.prepare(`UPDATE billing_milestones SET status = 'invoiced', invoiced_date = ?, due_date = ?, invoice_no = ?
-              WHERE id = ?`).run(date, due, String(req.body.invoice_no || '').trim(), m.id);
+              WHERE id = ?`).run(date, due, inv.invoice_no, m.id);
   audit('staff', req.user.id, req.user.name, '開立請款', m.name, date);
   res.json({ ok: true });
 });
@@ -85,6 +90,8 @@ const pickReceipt = picker(['project_id', 'milestone_id', 'date', 'amount', 'met
 router.post('/receipts', requireStaff('billing'), (req, res) => {
   const r = pickReceipt(req.body || {});
   if (!r.project_id) return res.status(400).json({ error: '請指定案場' });
+  const badInv = fixInvoiceNo(r);
+  if (badInv) return res.status(400).json({ error: badInv });
   if (!r.amount) return res.status(400).json({ error: '請填收款金額' });
   if (!r.date) r.date = today();
   r.created_by = req.user.id;
@@ -99,6 +106,8 @@ router.put('/receipts/:id', requireStaff('billing'), (req, res) => {
   if (!before) return res.status(404).json({ error: '找不到此收款' });
   const r = pickReceipt(req.body || {});
   delete r.project_id;
+  const badInv = fixInvoiceNo(r);
+  if (badInv) return res.status(400).json({ error: badInv });
   update('receipts', before.id, r);
   syncMilestonePaid(before.milestone_id);
   syncMilestonePaid(r.milestone_id);

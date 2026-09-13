@@ -87,7 +87,8 @@ App.page('projects', {
     steps: [
       '新增案場 → 開估價單 → 估價單標成交會自動產生合約 → 套用請款節點與工序範本 → 開始施工。',
       '案場詳情頁上方永遠顯示這個案子的錢：合約總價、已收、應收、成本、毛利。',
-      '產生業主端連結後傳給客戶，他可以自己看進度與照片、線上簽追加單，不必再一直打電話問。'
+      '產生業主端連結後傳給客戶，他可以自己看進度與照片、線上簽追加單，不必再一直打電話問。',
+      '完工後以書面通知業主驗收，把日期填在「書面通知業主驗收日」：系統會算出業主應會同驗收的期限（範本 10 日），逾期會開待辦提醒你催告。'
     ],
     notes: ['案子狀態會影響提醒：只有設計中／已簽約／施工中／驗收中／保固中的案子會跑每日自動提醒。']
   },
@@ -165,7 +166,8 @@ function projectDialog(row, done) {
       ${UI.input('start_date', '開工日', { type: 'date', value: row ? row.start_date : '' })}
       ${UI.input('due_date', '合約完工日', { type: 'date', value: row ? row.due_date : '' })}
       ${UI.input('actual_end_date', '實際完工日', { type: 'date', value: row ? row.actual_end_date : '' })}
-      ${UI.input('handover_date', '交屋日（保固起算）', { type: 'date', value: row ? row.handover_date : '' })}
+      ${UI.input('acceptance_notice_date', '書面通知業主驗收日', { type: 'date', value: row ? row.acceptance_notice_date : '' })}
+      ${UI.input('handover_date', '交屋日（驗收完成，保固起算）', { type: 'date', value: row ? row.handover_date : '' })}
       ${UI.input('warranty_months', '保固月數', { type: 'number', value: row ? row.warranty_months : 12 })}
       ${UI.textarea('note', '備註', { value: row ? row.note : '' })}
     </div>`,
@@ -231,6 +233,7 @@ async function renderProjectDetail(el, id) {
       ${m.change_pending ? `<div class="notice warn">有 ${m.change_sent_count + m.change_draft_count} 張追加減帳還沒簽認，合計
         ${UI.fmtMoney(m.change_pending)}。<b>未簽認的金額不算在上面的合約總價裡</b> —— 先讓業主簽，再叫師傅做。</div>` : ''}
       ${penaltyNotice(m)}
+      ${acceptanceNotice(p)}
       ${m.milestone_gap && App.can('billing') ? `<div class="notice warn">請款節點加起來比原合約少 ${UI.fmtMoney(m.milestone_gap)}，
         代表有一段合約金額沒有安排請款時機，檢查一下節點比例。</div>` : ''}
       ${m.cost_variance > 0 ? `<div class="notice warn">實際成本已經比當初估價高出 ${UI.fmtMoney(m.cost_variance)}

@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS projects (
   due_date TEXT NOT NULL DEFAULT '',             -- 合約完工日
   actual_end_date TEXT NOT NULL DEFAULT '',      -- 實際完工
   handover_date TEXT NOT NULL DEFAULT '',        -- 交屋日（保固起算）
+  acceptance_notice_date TEXT NOT NULL DEFAULT '', -- 書面通知業主驗收日（範本：業主應於翌日起 10 日內會同驗收）
   warranty_months INTEGER NOT NULL DEFAULT 12,
   client_token TEXT NOT NULL DEFAULT '',         -- 業主端連結用；空＝尚未開通
   note TEXT NOT NULL DEFAULT '',
@@ -151,7 +152,11 @@ CREATE TABLE IF NOT EXISTS contracts (
   sign_date TEXT NOT NULL DEFAULT '',
   amount INTEGER NOT NULL DEFAULT 0,             -- 原始合約金額（含稅）
   work_days INTEGER NOT NULL DEFAULT 0,          -- 約定工期（日曆天）
-  penalty_per_day INTEGER NOT NULL DEFAULT 0,    -- 逾期違約金／日
+  penalty_per_day INTEGER NOT NULL DEFAULT 0,    -- 逾期違約金／日（0＝依範本工程總價千分之一）
+  review_given_date TEXT NOT NULL DEFAULT '',    -- 交付業主審閱日（範本審閱期至少 7 日）
+  warranty_bond_amount INTEGER NOT NULL DEFAULT 0, -- 公司交給業主的保固保證金（範本不低於工程總價 5%）
+  warranty_bond_date TEXT NOT NULL DEFAULT '',
+  warranty_bond_returned_date TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active',         -- active／closed／void
   note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))

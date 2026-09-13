@@ -2,7 +2,7 @@
 const express = require('express');
 const { db, audit, today, nextSerial, randomToken, addMonths, listSetting, getSetting } = require('../db');
 const { requireStaff } = require('../auth');
-const { picker, insert, update, get, remove } = require('../crud');
+const { picker, insert, update, get, remove, checkTaxId } = require('../crud');
 const { projectMoney, projectProgress, hideCosts, canSee } = require('../finance');
 
 const router = express.Router();
@@ -28,12 +28,17 @@ router.get('/customers', requireStaff('customers'), (req, res) => {
 router.post('/customers', requireStaff('customers'), (req, res) => {
   const c = pickCustomer(req.body || {});
   if (!c.name) return res.status(400).json({ error: '請填客戶姓名' });
+  const bad = checkTaxId(c);
+  if (bad) return res.status(400).json({ error: bad });
   res.json({ id: insert('customers', c) });
 });
 
 router.put('/customers/:id', requireStaff('customers'), (req, res) => {
   if (!get('customers', req.params.id)) return res.status(404).json({ error: '找不到此客戶' });
-  update('customers', Number(req.params.id), pickCustomer(req.body || {}));
+  const c = pickCustomer(req.body || {});
+  const bad = checkTaxId(c);
+  if (bad) return res.status(400).json({ error: bad });
+  update('customers', Number(req.params.id), c);
   res.json({ ok: true });
 });
 
@@ -48,7 +53,7 @@ router.delete('/customers/:id', requireStaff('customers'), (req, res) => {
 
 const PROJECT_FIELDS = ['name', 'customer_id', 'address', 'site_type', 'area_ping', 'style', 'designer_id',
   'supervisor_id', 'status', 'sign_date', 'start_date', 'due_date', 'actual_end_date', 'handover_date',
-  'warranty_months', 'note'];
+  'acceptance_notice_date', 'warranty_months', 'note'];
 const pickProject = picker(PROJECT_FIELDS, ['customer_id', 'designer_id', 'supervisor_id', 'warranty_months'], ['area_ping']);
 
 // 清單：一列就要看得出「這案子現在卡在哪、錢收了沒、還賺不賺」
@@ -150,8 +155,16 @@ router.delete('/projects/:id/client-link', requireStaff('projects'), (req, res) 
 
 // ---- 合約 ----
 
-const pickContract = picker(['project_id', 'contract_no', 'kind', 'quote_id', 'sign_date', 'amount',
-  'work_days', 'penalty_per_day', 'status', 'note'], ['project_id', 'quote_id', 'amount', 'work_days', 'penalty_per_day']);
+const pickContractFields = picker(['project_id', 'contract_no', 'kind', 'quote_id', 'sign_date', 'amount',
+  'work_days', 'penalty_per_day', 'review_given_date', 'warranty_bond_amount', 'warranty_bond_date',
+  'warranty_bond_returned_date', 'status', 'note'],
+['project_id', 'quote_id', 'amount', 'work_days', 'penalty_per_day', 'warranty_bond_amount']);
+// 數字欄位留空時 picker 給 null，但這幾欄在資料表是 NOT NULL —— 留空就是 0，不要讓存檔失敗
+function pickContract(body) {
+  const c = pickContractFields(body);
+  for (const k of ['amount', 'work_days', 'penalty_per_day', 'warranty_bond_amount']) if (c[k] === null) c[k] = 0;
+  return c;
+}
 
 router.post('/contracts', requireStaff('projects'), (req, res) => {
   const c = pickContract(req.body || {});

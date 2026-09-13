@@ -31,7 +31,12 @@ App.page('vendors', {
     const load = async () => {
       const rows = await GET('/vendors' + App.qs(state));
       App.vendors = rows.filter(r => r.active);
-      box.innerHTML = UI.table(['名稱', '類型／工種', '聯絡', '評價', '責任險到期', '承接', '在手缺失', ''],
+      // 沒統編又標成公司行號的工班，多半其實是個人：沒改的話付款時不會代扣所得稅與補充保費
+      const maybeInd = rows.filter(r => r.active && r.kind !== 'supplier' && !r.tax_id && r.payee_type !== 'individual');
+      box.innerHTML = (maybeInd.length ? `<div class="notice warn">有 ${maybeInd.length} 家工班沒填統編，請款身分卻是「公司行號」：
+        ${UI.esc(maybeInd.slice(0, 5).map(r => r.name).join('、'))}${maybeInd.length > 5 ? ' 等' : ''}。
+        是個人的請按「編輯」改成「個人」，付款時才會代扣所得稅與補充保費；是公司的請補上統編。</div>` : '')
+        + UI.table(['名稱', '類型／工種', '聯絡', '評價', '責任險到期', '承接', '在手缺失', ''],
         rows.map(r => `<tr class="${r.active ? '' : 'dim'}">
         <td><strong>${UI.esc(r.name)}</strong>${r.tax_id ? `<div class="muted">統編 ${UI.esc(r.tax_id)}</div>` : ''}</td>
         <td>${twText(TW.vendor_kind, r.kind)}<div class="muted">${UI.esc(r.trade || '')}</div>

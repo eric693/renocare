@@ -495,6 +495,68 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   eq('操作紀錄可依身分篩選',
     (await req('GET', '/api/audit?actor_type=client')).body.every(r => r.actor_type === 'client'), true);
 
+  console.log('\n統編、發票號碼格式與契約範本紀錄');
+  eq('統編檢查碼錯誤被擋', (await req('POST', '/api/customers', { name: '統編測試', tax_id: '12345678' })).status, 400);
+  const goodCust = await req('POST', '/api/customers', { name: '統編測試', tax_id: '22099131' });
+  eq('正確的統編可以存', goodCust.status, 200);
+  eq('編輯客戶時一樣檢查統編',
+    (await req('PUT', `/api/customers/${goodCust.body.id}`, { name: '統編測試', tax_id: '2209913' })).status, 400);
+  await req('DELETE', `/api/customers/${goodCust.body.id}`);
+  // 10458574：一般算法總和 29 不能被 5 整除，但第 7 碼是 7，加 1 後可以 —— 專測那條特例
+  eq('第 7 碼為 7 的統編特例接受', (await req('POST', '/api/vendors', { name: '統編七測試', tax_id: '10458574' })).status, 200);
+  eq('工班統編一樣檢查', (await req('POST', '/api/vendors', { name: '統編測試工班', tax_id: '11111111' })).status, 400);
+  eq('發票號碼格式錯誤被擋',
+    (await req('POST', '/api/receipts', { project_id: pj.id, amount: 1, invoice_no: 'A1234567' })).status, 400);
+  const rcInv = await req('POST', '/api/receipts', { project_id: pj.id, amount: 1, date: '2026-01-21', invoice_no: 'ab 12345678' });
+  const rcRow = (await req('GET', `/api/projects/${pj.id}/detail`)).body.receipts.find(r => r.id === rcInv.body.id);
+  eq('發票號碼統一存成 AB-12345678', rcRow && rcRow.invoice_no, 'AB-12345678');
+  await req('DELETE', `/api/receipts/${rcInv.body.id}`);
+  const anyMs = (await req('GET', `/api/projects/${pj.id}/detail`)).body.money.milestones[1];
+  eq('開單請款的發票號碼一樣檢查', (await req('POST', `/api/milestones/${anyMs.id}/invoice`, { invoice_no: '12345' })).status, 400);
+
+  const ctA = (await req('GET', `/api/projects/${pj.id}/detail`)).body.contracts[0];
+  eq('合約的數字欄位留空不會存檔失敗',
+    (await req('PUT', `/api/contracts/${ctA.id}`, { penalty_per_day: '', warranty_bond_amount: '' })).status, 200);
+  await req('PUT', `/api/contracts/${ctA.id}`, { review_given_date: '2025-12-20', warranty_bond_amount: 8000, warranty_bond_date: '2026-04-10' });
+  const ctB = (await req('GET', `/api/projects/${pj.id}/detail`)).body.contracts.find(c => c.id === ctA.id);
+  ok('合約記得審閱日與保固保證金', ctB.review_given_date === '2025-12-20' && ctB.warranty_bond_amount === 8000);
+  await req('PUT', `/api/contracts/${ctA.id}`, { review_given_date: ctA.review_given_date, warranty_bond_amount: 0, warranty_bond_date: '' });
+
+  // 每日提醒：直接呼叫排程會跑的那支，驗三種新提醒真的會開待辦
+  const reminders = require('../src/reminders');
+  const autoTasks = async kw => (await req('GET', `/api/tasks?q=${encodeURIComponent(kw)}`)).body
+    .filter(x => x.source === 'auto' && ['todo', 'doing'].includes(x.status));
+  const licBackup = (await req('GET', '/api/settings')).body;
+  await req('PUT', '/api/settings', { license_no: '測試登記證字號', license_expiry: '2000-01-01', tech_certs: '測試技師:專業施工技術人員:2000-02-01' });
+  reminders.run();
+  const licTasks = await autoTasks('證照將到期');
+  ok('登記證到期開待辦', licTasks.some(x => x.title.includes('測試登記證字號')));
+  ok('專業技術人員證到期開待辦', licTasks.some(x => x.title.includes('測試技師')));
+  ok('儀表板顯示證照將到期', (await req('GET', '/api/dashboard')).body.attention.license_soon >= 2);
+  for (const x of licTasks) await req('DELETE', `/api/tasks/${x.id}`);
+  await req('PUT', '/api/settings', { license_no: licBackup.license_no, license_expiry: licBackup.license_expiry, tech_certs: licBackup.tech_certs });
+
+  const pjBefore = (await req('GET', `/api/projects/${pj.id}/detail`)).body.project;
+  await req('PUT', `/api/projects/${pj.id}`, { acceptance_notice_date: '2026-01-01', handover_date: '' });
+  reminders.run();
+  const accTasks = (await autoTasks('業主逾期未驗收')).filter(x => x.project_id === pj.id);
+  eq('書面通知驗收後業主逾期未會同會開待辦', accTasks.length, 1);
+  for (const x of accTasks) await req('DELETE', `/api/tasks/${x.id}`);
+  await req('PUT', `/api/projects/${pj.id}`, { acceptance_notice_date: pjBefore.acceptance_notice_date, handover_date: pjBefore.handover_date });
+
+  const bondPj = (await req('POST', '/api/projects', {
+    name: '保固保證金測試案', customer_id: cust, status: 'warranty', handover_date: '2020-01-01', warranty_months: 12
+  })).body;
+  const bondCt = (await req('POST', '/api/contracts', {
+    project_id: bondPj.id, amount: 100000, warranty_bond_amount: 5000, warranty_bond_date: '2020-01-01'
+  })).body;
+  reminders.run();
+  const bondTasks = (await autoTasks('取回保固保證金')).filter(x => x.project_id === bondPj.id);
+  eq('保固期滿還沒取回保固保證金會開待辦', bondTasks.length, 1);
+  for (const x of bondTasks) await req('DELETE', `/api/tasks/${x.id}`);
+  await req('DELETE', `/api/contracts/${bondCt.id}`);
+  await req('DELETE', `/api/projects/${bondPj.id}`);
+
   console.log('\n帳號刪除的三道防線');
   const me = (await req('GET', '/api/users')).body.find(u => u.username === 'admin');
   eq('不能刪除自己', (await req('DELETE', `/api/users/${me.id}`)).status, 400);

@@ -106,7 +106,7 @@ const cust2 = insert('customers', {
   name: '李小姐', phone: '0920-987-654', address: '新北市板橋區文化路二段 50 號', source: 'Instagram'
 });
 const cust3 = insert('customers', {
-  name: '御品餐飲有限公司', phone: '02-2758-0000', tax_id: '54321098',
+  name: '御品餐飲有限公司', phone: '02-2758-0000', tax_id: '54321090',
   address: '台北市大安區忠孝東路四段 200 號 1 樓', source: '建商合作'
 });
 

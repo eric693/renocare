@@ -65,7 +65,9 @@ router.get('/dashboard', requireStaff('dashboard'), (req, res) => {
     vendor_insurance: db.prepare(`SELECT COUNT(*) AS n FROM vendors WHERE active = 1
       AND liability_expiry <> '' AND liability_expiry < ?`).get(t).n,
     retention_held: retentionHeld,
-    sub_unpaid: subUnpaid
+    sub_unpaid: subUnpaid,
+    license_soon: require('../reminders').companyLicenses()
+      .filter(l => l.expiry <= shiftDate(t, Number(require('../db').getSetting('license_alert_days', '60')) || 60)).length
   };
 
   // 本月新簽與成交轉換

@@ -49,6 +49,7 @@ App.page('dashboard', {
         a.permit_soon && ['許可將到期', a.permit_soon + ' 件', 'permits', 'danger', ''],
         a.warranty_soon && ['保固將屆', a.warranty_soon + ' 件', 'warranty', '', '到期前回訪一次'],
         a.vendor_insurance && ['工班保險已過期', a.vendor_insurance + ' 家', 'vendors', 'danger', '出事是公司扛'],
+        a.license_soon && ['公司證照將到期', a.license_soon + ' 張', 'settings', 'danger', '逾期不得從事室內裝修'],
         a.retention_held && ['押著工班保留款', UI.fmtMoney(a.retention_held), 'payables', '', ''],
         a.sub_unpaid && ['估驗已確認待付', UI.fmtMoney(a.sub_unpaid), 'payables', '', '']
       ].filter(Boolean);

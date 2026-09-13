@@ -8,7 +8,7 @@
 const express = require('express');
 const { db, audit, today, nextSerial, getSetting } = require('../db');
 const { requireStaff } = require('../auth');
-const { picker, insert, update, get, remove, lineAmount } = require('../crud');
+const { picker, insert, update, get, remove, lineAmount, checkTaxId } = require('../crud');
 
 const router = express.Router();
 
@@ -54,12 +54,17 @@ router.get('/vendors', requireStaff(), (req, res) => {
 router.post('/vendors', requireStaff('vendors'), (req, res) => {
   const v = pickVendor(req.body || {});
   if (!v.name) return res.status(400).json({ error: '請填廠商名稱' });
+  const bad = checkTaxId(v);
+  if (bad) return res.status(400).json({ error: bad });
   res.json({ id: insert('vendors', v) });
 });
 
 router.put('/vendors/:id', requireStaff('vendors'), (req, res) => {
   if (!get('vendors', req.params.id)) return res.status(404).json({ error: '找不到此廠商' });
-  update('vendors', Number(req.params.id), pickVendor(req.body || {}));
+  const v = pickVendor(req.body || {});
+  const bad = checkTaxId(v);
+  if (bad) return res.status(400).json({ error: bad });
+  update('vendors', Number(req.params.id), v);
   res.json({ ok: true });
 });
 

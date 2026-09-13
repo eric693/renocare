@@ -19,7 +19,10 @@ router.get('/meta', requireStaff(), (req, res) => {
     defaults: {
       retention_pct: Number(getSetting('default_retention_pct', '10')),
       warranty_pct: Number(getSetting('default_warranty_pct', '5')),
-      warranty_months: Number(getSetting('default_warranty_months', '12'))
+      warranty_months: Number(getSetting('default_warranty_months', '12')),
+      review_days: Number(getSetting('review_days', '7')),
+      client_bond_pct: Number(getSetting('client_bond_pct', '5')),
+      acceptance_days: Number(getSetting('acceptance_days', '10'))
     }
   });
 });
