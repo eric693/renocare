@@ -3,7 +3,7 @@ const express = require('express');
 const { db, audit, today, nextSerial, randomToken, addMonths, listSetting, getSetting } = require('../db');
 const { requireStaff } = require('../auth');
 const { picker, insert, update, get, remove } = require('../crud');
-const { projectMoney, projectProgress } = require('../finance');
+const { projectMoney, projectProgress, hideCosts, canSee } = require('../finance');
 
 const router = express.Router();
 
@@ -81,6 +81,7 @@ router.get('/projects', requireStaff('projects'), (req, res) => {
     r.delay_days = (r.due_date && !r.actual_end_date && r.due_date < today())
       ? Math.round((new Date(today()) - new Date(r.due_date)) / 86400000) : 0;
   }
+  if (!canSee(req, 'profit')) rows.forEach(hideCosts);
   res.json(rows);
 });
 
@@ -190,7 +191,18 @@ router.delete('/contracts/:id', requireStaff('projects'), (req, res) => {
 // 案場詳情頁一次要顯示十幾個區塊。拆成十幾支 API 會讓畫面一格一格跳出來，
 // 而且每一格都可能自己失敗；這裡一次給完，前端只要畫。
 
-router.get('/projects/:id/detail', requireStaff('projects'), (req, res) => {
+// 選案場的頁面（工進、日報、發包、請款、圖面）也靠這支拿資料，所以有其中任一模組就能進來。
+// 但「進得來」不等於「每一塊都看得到」：沒有對應模組的區塊回空陣列（前端分頁照畫不會炸），
+// 成本與毛利只給有損益權限的人 —— 否則工務從這裡就讀得到估價成本，設計師讀得到發包金額。
+const DETAIL_MODULES = ['projects', 'schedule', 'sitelog', 'subcontracts', 'billing', 'drawings'];
+const SECTION_MODULES = {
+  contracts: ['billing'], receipts: ['billing'], quotes: ['quotes'], changes: ['changes'],
+  subcontracts: ['subcontracts'], materials: ['materials'], defects: ['defects'], warranties: ['warranty'],
+  logs: ['sitelog'], photos: ['sitelog'], drawings: ['drawings'], permits: ['permits'], expenses: ['profit']
+};
+
+router.get('/projects/:id/detail', requireStaff(), (req, res) => {
+  if (!DETAIL_MODULES.some(m => canSee(req, m))) return res.status(403).json({ error: '無此模組使用權限' });
   const p = db.prepare(`SELECT p.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
       d.name AS designer_name, s.name AS supervisor_name
     FROM projects p
@@ -202,7 +214,7 @@ router.get('/projects/:id/detail', requireStaff('projects'), (req, res) => {
   const id = p.id;
   const all = sql => db.prepare(sql).all(id);
 
-  res.json({
+  const out = {
     project: p,
     money: projectMoney(id),
     progress: projectProgress(id),
@@ -244,7 +256,13 @@ router.get('/projects/:id/detail', requireStaff('projects'), (req, res) => {
                    WHERE e.project_id = ? ORDER BY e.date DESC, e.id DESC`),
     tasks: all(`SELECT t.*, u.name AS assignee_name FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id
                 WHERE t.project_id = ? AND t.status IN ('todo','doing') ORDER BY t.due_date, t.id`)
-  });
+  };
+  for (const [key, mods] of Object.entries(SECTION_MODULES)) {
+    if (!mods.some(m => canSee(req, m))) out[key] = [];
+  }
+  if (!canSee(req, 'billing')) out.money.milestones = [];
+  if (!canSee(req, 'profit')) hideCosts(out.money);
+  res.json(out);
 });
 
 // ---- 專案雜支 ----

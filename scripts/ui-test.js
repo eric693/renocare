@@ -24,7 +24,8 @@ function ok(name, cond, extra = '') {
   // 先拿一份登入 cookie，jsdom 那邊的 fetch 直接帶著走
   const login = await fetch(BASE + '/api/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'admin', password: 'admin123' })
+    // UI_USER／UI_PASS 可以換成權限較少的帳號跑一次，確認分頁與欄位隱藏後畫面不會炸
+    body: JSON.stringify({ username: process.env.UI_USER || 'admin', password: process.env.UI_PASS || 'admin123' })
   });
   const cookie = (login.headers.getSetCookie ? login.headers.getSetCookie() : [login.headers.get('set-cookie')])
     .filter(Boolean).map(c => c.split(';')[0]).join('; ');
@@ -56,7 +57,10 @@ function ok(name, cond, extra = '') {
   const App = win.App, UI = win.UI;
   await App.boot();
   ok('登入後渲染主畫面', !!win.document.getElementById('nav'), '找不到側欄');
-  ok('側欄有導覽項目', win.document.querySelectorAll('[data-nav]').length > 15,
+  const isAdmin = () => App.me && App.me.role === 'admin';
+  // 用權限較少的帳號跑時，沒權限的項目明講跳過，不要算成失敗
+  const skip = (name, why = '示範資料沒有可編輯的項目') => console.log(`  - ${name}（${why}，跳過）`);
+  ok('側欄有導覽項目', win.document.querySelectorAll('[data-nav]').length > (isAdmin() ? 15 : 0),
     `只有 ${win.document.querySelectorAll('[data-nav]').length} 項`);
 
   const body = () => win.document.getElementById('page-body');
@@ -97,7 +101,7 @@ function ok(name, cond, extra = '') {
     const b0 = bad();
     ok('案場詳情', !b0, b0);
     const tabs = [...win.document.querySelectorAll('[data-tab]')];
-    ok('詳情頁有分頁列', tabs.length >= 8, `只有 ${tabs.length} 個`);
+    ok('詳情頁有分頁列', tabs.length >= (isAdmin() ? 8 : 1), `只有 ${tabs.length} 個`);
     for (const t of tabs) {
       errors.length = 0;
       try {
@@ -132,7 +136,8 @@ function ok(name, cond, extra = '') {
   }
 
   // 唯讀的明細對話框沒有表單欄位，另外檢查：要撈得到資料並且畫得出圖表與三張分組表
-  try {
+  if (!App.can('profit')) skip('成本結構', '沒有專案損益權限');
+  else try {
     await win.costBreakdown(pj.id, pj.name);
     const mask = win.document.querySelector('.modal-mask');
     const tables = mask ? mask.querySelectorAll('table').length : 0;
@@ -148,6 +153,7 @@ function ok(name, cond, extra = '') {
   console.log('\n選案場的頁面：內容、篩選與清除');
   for (const key of ['schedule', 'sitelog', 'subcontracts', 'billing', 'drawings']) {
     const t = App.pages[key].title;
+    if (!App.can(App.pages[key].module)) { skip(t, '沒有這個模組的權限'); continue; }
     errors.length = 0;
     try {
       await App.go(`${key}?project_id=${pj.id}`);
@@ -170,13 +176,16 @@ function ok(name, cond, extra = '') {
     } catch (e) { ok(t, false, e.message); }
   }
 
-  await App.go('customers');
-  ok('客戶名單有來源篩選', !!body().querySelector('[data-f="source"]'));
+  if (!App.can('customers')) skip('客戶名單有來源篩選', '沒有客戶名單權限');
+  else {
+    await App.go('customers');
+    ok('客戶名單有來源篩選', !!body().querySelector('[data-f="source"]'));
+  }
 
   // 每個「編輯」按鈕都要打得開、帶得出欄位。示範資料沒有對應項目時明講跳過，不要默默算通過
   console.log('\n編輯對話框');
-  const skip = name => console.log(`  - ${name}（示範資料沒有可編輯的項目，跳過）`);
-  const checkEdit = async (name, title, open) => {
+  const checkEdit = async (name, title, open, module) => {
+    if (module && !App.can(module)) { skip(name, '沒有這個模組的權限'); return; }
     errors.length = 0;
     try {
       const btn = await open();
@@ -199,14 +208,14 @@ function ok(name, cond, extra = '') {
     if (!d) return null;
     await App.go(`billing?project_id=${d.project.id}`);
     return body().querySelector('[data-rcedit]');
-  });
+  }, 'billing');
   await checkEdit('編輯圖面', '編輯圖面', async () => {
     const d = withData(x => x.drawings.length);
     if (!d) return null;
     await App.go(`drawings?project_id=${d.project.id}`);
     return body().querySelector('[data-dwedit]');
-  });
-  const subs = await (await win.fetch('/api/subcontracts')).json();
+  }, 'drawings');
+  const subs = App.can('subcontracts') ? await (await win.fetch('/api/subcontracts')).json() : [];
   const openSub = async s => {
     await App.go(`subcontracts?project_id=${s.project_id}`);
     body().querySelector(`[data-sbopen="${s.id}"]`).click();
@@ -217,25 +226,28 @@ function ok(name, cond, extra = '') {
     if (!s) return null;
     await openSub(s);
     return topModal().querySelector('[data-siedit]');
-  });
+  }, 'subcontracts');
   await checkEdit('編輯估驗', '編輯估驗', async () => {
     const s = subs.find(x => x.valuations.length && x.valuations[x.valuations.length - 1].status !== 'paid');
     if (!s) return null;
     await openSub(s);
     return topModal().querySelector('[data-vaedit]');
-  });
+  }, 'subcontracts');
   // 示範資料的變更單多半已簽認（不能改明細），所以臨時開一張草稿來測，測完刪掉
   const json = (url, method, data) => win.fetch(url, {
     method, headers: { 'Content-Type': 'application/json' }, body: data ? JSON.stringify(data) : undefined
   }).then(r => r.json());
-  const tmpCo = await json('/api/changes', 'POST', { project_id: pj.id, title: '冒煙測試暫存變更單', reason: 'client' });
-  await json(`/api/changes/${tmpCo.id}/items`, 'POST', { kind: 'add', name: '測試項目', qty: 1, unit_price: 100 });
-  await checkEdit('編輯變更明細', '編輯變更明細', async () => {
-    await win.changeDetail(tmpCo.id, () => {});
-    await tick();
-    return topModal().querySelector('[data-ciedit]');
-  });
-  await json(`/api/changes/${tmpCo.id}`, 'DELETE');
+  if (!App.can('changes')) skip('編輯變更明細', '沒有追加減帳權限');
+  else {
+    const tmpCo = await json('/api/changes', 'POST', { project_id: pj.id, title: '冒煙測試暫存變更單', reason: 'client' });
+    await json(`/api/changes/${tmpCo.id}/items`, 'POST', { kind: 'add', name: '測試項目', qty: 1, unit_price: 100 });
+    await checkEdit('編輯變更明細', '編輯變更明細', async () => {
+      await win.changeDetail(tmpCo.id, () => {});
+      await tick();
+      return topModal().querySelector('[data-ciedit]');
+    });
+    await json(`/api/changes/${tmpCo.id}`, 'DELETE');
+  }
 
   console.log('\n匯出與列印');
   // CSV 的轉義與 BOM 是「Excel 打開會不會變亂碼／欄位會不會跑掉」的唯一保障

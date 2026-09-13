@@ -123,7 +123,7 @@ App.page('projects', {
         <td class="num">${UI.fmtMoney(r.contract_total)}</td>
         <td class="num">${UI.fmtMoney(r.received)}
           <div class="muted ${r.overdue ? 'danger' : ''}">應收 ${UI.fmtMoney(r.receivable)}</div></td>
-        <td class="num ${r.gross_profit < 0 ? 'danger' : ''}">${r.margin}%</td>
+        <td class="num ${r.gross_profit < 0 ? 'danger' : ''}">${r.margin === undefined ? '<span class="muted">—</span>' : r.margin + '%'}</td>
         <td>${r.delay_days ? UI.tag(`逾期 ${r.delay_days} 天`, 'danger') : UI.date(r.due_date)}</td>
       </tr>`), '還沒有案場');
       UI.bindCsv(act, 'projects', '案場清單', [
@@ -134,7 +134,7 @@ App.page('projects', {
         ['實際完工', r => r.actual_end_date], ['逾期天數', r => r.delay_days || ''],
         ['工進%', r => r.progress === null ? '' : r.progress],
         ['合約總價', r => r.contract_total], ['已收', r => r.received], ['應收', r => r.receivable],
-        ['逾期未收', r => r.overdue], ['毛利', r => r.gross_profit], ['毛利率%', r => r.margin],
+        ['逾期未收', r => r.overdue], ['毛利', r => r.gross_profit ?? ''], ['毛利率%', r => r.margin ?? ''],
         ['追加待簽張數', r => r.change_sent_count]
       ], () => rows);
     };
@@ -221,20 +221,27 @@ async function renderProjectDetail(el, id) {
         ${stat(UI.fmtMoney(m.received), '已收', 'ok', '', `還沒收 ${UI.fmtShort(m.contract_total - m.received)}`)}
         ${stat(UI.fmtMoney(m.receivable), '可以去要的錢', m.overdue ? 'danger' : m.receivable ? 'warn' : '', '',
     m.overdue ? `其中逾期 ${UI.fmtShort(m.overdue)}` : '')}
+        ${m.gross_profit === undefined ? '' /* 沒有損益權限：後端不給成本與毛利 */ : `
         ${stat(UI.fmtMoney(m.cost_committed), '已發生成本', '', '',
       `發包 ${UI.fmtShort(m.sub_committed)}／材料 ${UI.fmtShort(m.material_cost)}／雜支 ${UI.fmtShort(m.expense_cost)}`)}
-        ${stat(UI.fmtMoney(m.gross_profit), '預估毛利', m.gross_profit < 0 ? 'danger' : 'ok', '', `毛利率 ${m.margin}%`)}
+        ${stat(UI.fmtMoney(m.gross_profit), '預估毛利', m.gross_profit < 0 ? 'danger' : 'ok', '', `毛利率 ${m.margin}%`)}`}
         ${stat(d.progress === null ? '—' : d.progress + '%', '工進', '', '',
         p.due_date ? `合約完工 ${p.due_date}` : '')}
       </div>
       ${m.change_pending ? `<div class="notice warn">有 ${m.change_sent_count + m.change_draft_count} 張追加減帳還沒簽認，合計
         ${UI.fmtMoney(m.change_pending)}。<b>未簽認的金額不算在上面的合約總價裡</b> —— 先讓業主簽，再叫師傅做。</div>` : ''}
-      ${m.milestone_gap ? `<div class="notice warn">請款節點加起來比原合約少 ${UI.fmtMoney(m.milestone_gap)}，
+      ${m.milestone_gap && App.can('billing') ? `<div class="notice warn">請款節點加起來比原合約少 ${UI.fmtMoney(m.milestone_gap)}，
         代表有一段合約金額沒有安排請款時機，檢查一下節點比例。</div>` : ''}
       ${m.cost_variance > 0 ? `<div class="notice warn">實際成本已經比當初估價高出 ${UI.fmtMoney(m.cost_variance)}
         （估 ${UI.fmtMoney(m.quoted_cost)}，實際 ${UI.fmtMoney(m.cost_committed)}）。</div>` : ''}
     </div>`;
 
+  // 分頁照模組權限列：後端對沒權限的區塊回空陣列，分頁留著只會讓人以為「這案子沒資料」
+  const TAB_MODULES = {
+    money: ['billing'], changes: ['changes'], schedule: ['schedule'], subs: ['subcontracts'],
+    materials: ['materials'], site: ['sitelog'], quality: ['defects', 'warranty'],
+    docs: ['drawings', 'permits'], cost: ['profit']
+  };
   const tabs = [
     ['money', '合約與收款'],
     ['changes', `追加減帳${d.changes.filter(c => c.status === 'sent').length ? ' ●' : ''}`],
@@ -245,7 +252,7 @@ async function renderProjectDetail(el, id) {
     ['quality', '缺失與保固'],
     ['docs', '圖面與許可'],
     ['cost', '成本與雜支']
-  ];
+  ].filter(([k]) => TAB_MODULES[k].some(mod => App.can(mod)));
   el.innerHTML = `${back}${head}
     <div class="tabs" id="tabs">${tabs.map(([k, t], i) =>
     `<button data-view data-tab="${k}" class="${i === 0 ? 'active' : ''}">${UI.esc(t)}</button>`).join('')}</div>
@@ -261,7 +268,8 @@ async function renderProjectDetail(el, id) {
   el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => render(b.dataset.tab));
   el.querySelector('#p-edit').onclick = () => projectDialog(p, () => renderProjectDetail(el, id));
   el.querySelector('#p-link').onclick = () => clientLinkDialog(p, () => renderProjectDetail(el, id));
-  render('money');
+  if (tabs.length) render(tabs[0][0]);
+  else body.innerHTML = '<div class="empty">你的帳號沒有這個案子底下任何分頁的權限。</div>';
 }
 
 function clientLinkDialog(p, done) {

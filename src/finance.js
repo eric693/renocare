@@ -160,4 +160,12 @@ function projectProgress(projectId) {
   return Math.round(done / w);
 }
 
-module.exports = { projectMoney, projectProgress, milestoneAmount };
+// 成本與毛利是公司的底價結構，跟工項成本單價同一個等級：只給有「專案損益」權限的人。
+// 收入面（合約總價、已收、應收）跟著案場走，不在這裡擋。
+const COST_FIELDS = ['sub_committed', 'sub_draft', 'sub_valued', 'sub_paid', 'sub_unpaid', 'retention_held',
+  'warranty_held', 'material_cost', 'expense_cost', 'cost_committed', 'gross_profit', 'margin',
+  'quoted_cost', 'cost_variance'];
+function hideCosts(obj) { for (const k of COST_FIELDS) delete obj[k]; return obj; }
+function canSee(req, moduleKey) { return req.user.role === 'admin' || req.userModules.includes(moduleKey); }
+
+module.exports = { projectMoney, projectProgress, milestoneAmount, hideCosts, canSee };

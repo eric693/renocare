@@ -205,6 +205,7 @@ const App = {
     }
     document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === key));
     if (location.hash.slice(1) !== rawKey) history.replaceState(null, '', '#' + rawKey);
+    if (App._lockObs) { App._lockObs.disconnect(); App._lockObs = null; }
     const el = document.getElementById('page');
     const readonly = !App.canEdit(def.module);
     el.innerHTML = `<div class="page-title">${UI.esc(def.title)}</div><div class="page-sub">${UI.esc(def.sub || '')}</div>`
@@ -215,7 +216,12 @@ const App = {
     try {
       await def.render(document.getElementById('page-body'));
       Charts.mount(el);
-      if (readonly) App.lockPage(el);
+      if (readonly) {
+        App.lockPage(el);
+        // 篩選、儲存後清單會整段重畫，新畫出來的按鈕也要鎖（lockPage 只改屬性，不會再觸發自己）
+        App._lockObs = new MutationObserver(() => App.lockPage(el));
+        App._lockObs.observe(document.getElementById('page-body'), { childList: true, subtree: true });
+      }
     }
     // page-error 讓冒煙測試認得出「這頁其實炸了」，不必去猜錯誤訊息長什麼樣
     catch (e) { document.getElementById('page-body').innerHTML = `<div class="empty page-error">${UI.esc(e.message)}</div>`; }

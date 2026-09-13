@@ -282,6 +282,33 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   ok('工務拿得到工項名單（開單挑項目要用）', Array.isArray(foremanUnits) && foremanUnits.length > 0);
   ok('但工務看不到工項的成本單價', foremanUnits.every(u => u.material_cost === undefined),
     JSON.stringify(foremanUnits[0]));
+  // 案場詳情一次回整個案子，最容易變成「繞過模組權限」的後門
+  const fDet = (await req('GET', `/api/projects/${pj.id}/detail`)).body;
+  ok('工務在案場詳情看不到成本與毛利',
+    fDet.money.gross_profit === undefined && fDet.money.cost_committed === undefined && fDet.money.margin === undefined);
+  eq('工務在案場詳情拿不到估價單（含成本）', fDet.quotes.length, 0);
+  eq('工務在案場詳情拿不到收款紀錄', fDet.receipts.length, 0);
+  eq('工務在案場詳情拿不到雜支', fDet.expenses.length, 0);
+  ok('工務在案場詳情仍拿得到自己模組的資料', fDet.subcontracts.length > 0 && Array.isArray(fDet.schedule));
+  ok('工務在案場清單看不到毛利率', (await req('GET', '/api/projects')).body.every(p => p.margin === undefined));
+  const fDash = (await req('GET', '/api/dashboard')).body;
+  ok('工務在儀表板看不到毛利', fDash.summary.gross_profit === undefined && fDash.projects.every(p => p.margin === undefined));
+
+  // 只開「請款與收款」的會計：選案場的請款頁要打得開，但拿不到發包與成本
+  await req('POST', '/api/logout');
+  await req('POST', '/api/login', { username: 'admin', password: 'admin123' });
+  const accName = 'acct_test_' + Date.now();
+  const acc = (await req('POST', '/api/users', { username: accName, password: 'acct123456', name: '測試會計', modules: ['billing'] })).body;
+  await req('POST', '/api/logout');
+  await req('POST', '/api/login', { username: accName, password: 'acct123456' });
+  const aDet = await req('GET', `/api/projects/${pj.id}/detail`);
+  eq('只有請款權限也打得開案場資料（請款頁要用）', aDet.status, 200);
+  ok('會計拿得到合約與收款', aDet.body.contracts.length > 0 && aDet.body.receipts.length > 0);
+  eq('會計拿不到發包單', aDet.body.subcontracts.length, 0);
+  eq('會計不能看案場清單', (await req('GET', '/api/projects')).status, 403);
+  await req('POST', '/api/logout');
+  await req('POST', '/api/login', { username: 'admin', password: 'admin123' });
+  await req('DELETE', `/api/users/${acc.id}`);
   await req('POST', '/api/logout');
   await req('POST', '/api/login', { username: 'designer', password: 'design123' });
   const designerVendors = (await req('GET', '/api/vendors')).body;
@@ -289,6 +316,7 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   ok('但設計師看不到工班的匯款帳戶', designerVendors.every(v => v.bank_info === undefined),
     JSON.stringify(designerVendors[0]));
   eq('設計師不能新增工班', (await req('POST', '/api/vendors', { name: '權限測試' })).status, 403);
+  eq('設計師在案場詳情拿不到發包單', (await req('GET', `/api/projects/${pj.id}/detail`)).body.subcontracts.length, 0);
 
   console.log('\n上傳檔案與照片');
   // 隱蔽工程沒拍到照，日後的責任歸屬就是幾萬到幾十萬。所以上傳這條路徑

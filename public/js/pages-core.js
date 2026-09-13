@@ -61,7 +61,7 @@ App.page('dashboard', {
             ${stat(UI.fmtMoney(s.received), '已收', 'ok')}
             ${stat(UI.fmtMoney(s.receivable), '現在可以去要的錢', s.receivable ? 'warn' : '', 'receivables')}
             ${stat(UI.fmtMoney(s.overdue), '其中已逾期', s.overdue ? 'danger' : '', 'receivables')}
-            ${stat(UI.fmtMoney(s.gross_profit), '預估毛利', s.gross_profit < 0 ? 'danger' : 'ok', 'profit', `毛利率 ${s.margin}%`)}
+            ${s.gross_profit === undefined ? '' : stat(UI.fmtMoney(s.gross_profit), '預估毛利', s.gross_profit < 0 ? 'danger' : 'ok', 'profit', `毛利率 ${s.margin}%`)}
             ${stat(UI.fmtMoney(s.change_pending), '待簽認追加金額', s.change_pending ? 'warn' : '', 'changes')}
           </div>
         </div>
@@ -98,7 +98,7 @@ App.page('dashboard', {
             <td class="num">${UI.fmtMoney(p.received)}</td>
             <td class="num ${p.overdue ? 'danger' : ''}">${UI.fmtMoney(p.receivable)}
               ${p.overdue ? `<div class="muted danger">逾期 ${UI.fmtMoney(p.overdue)}</div>` : ''}</td>
-            <td class="num ${p.gross_profit < 0 ? 'danger' : ''}">${p.margin}%</td>
+            <td class="num ${p.gross_profit < 0 ? 'danger' : ''}">${p.margin === undefined ? '<span class="muted">—</span>' : p.margin + '%'}</td>
             <td>${p.delay_days ? UI.tag(`逾期 ${p.delay_days} 天`, 'danger') : UI.date(p.due_date)}</td>
           </tr>`), '目前沒有進行中的案場')}
         </div>

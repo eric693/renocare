@@ -3,7 +3,7 @@ const express = require('express');
 const { db, today, thisMonth, shiftDate, audit, nowStamp } = require('../db');
 const { requireStaff } = require('../auth');
 const { picker, insert, update, get, remove } = require('../crud');
-const { projectMoney, projectProgress } = require('../finance');
+const { projectMoney, projectProgress, hideCosts, canSee } = require('../finance');
 
 const router = express.Router();
 
@@ -73,7 +73,7 @@ router.get('/dashboard', requireStaff('dashboard'), (req, res) => {
   const quoted = db.prepare(`SELECT COUNT(*) AS n FROM quotes WHERE substr(quote_date,1,7) = ? AND status <> 'draft'`).get(month);
   const won = db.prepare(`SELECT COUNT(*) AS n FROM quotes WHERE substr(decided_at,1,7) = ? AND status = 'accepted'`).get(month);
 
-  res.json({
+  const out = {
     date: t, month,
     summary: {
       live_count: projects.length, contract_total: contractTotal, received, receivable, overdue,
@@ -88,7 +88,10 @@ router.get('/dashboard', requireStaff('dashboard'), (req, res) => {
     my_tasks: db.prepare(`SELECT t.*, p.name AS project_name FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
       WHERE t.assignee_id = ? AND t.status IN ('todo','doing')
       ORDER BY (t.due_date = ''), t.due_date, t.id LIMIT 20`).all(req.user.id)
-  });
+  };
+  // 工務也看儀表板，但毛利是損益權限的事（見 finance.hideCosts）
+  if (!canSee(req, 'profit')) { hideCosts(out.summary); out.projects.forEach(hideCosts); }
+  res.json(out);
 });
 
 // ---- 待辦事項 ----

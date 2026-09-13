@@ -25,7 +25,7 @@ function projectScopedPage(key, { title, sub, module, tab, help, filters = [], n
       ], v => {
         const { project_id, ...rest } = v;
         fv = rest;
-        if (project_id !== curId) render(project_id); else paint();
+        if (String(project_id) !== String(curId)) render(project_id); else paint();
       });
       el.innerHTML = '';
       el.appendChild(bar);
@@ -43,7 +43,7 @@ function projectScopedPage(key, { title, sub, module, tab, help, filters = [], n
         box.innerHTML = `<div class="scope-head">
             <strong>${UI.esc(d.project.name)}</strong>
             <span class="muted">${UI.esc(d.project.code)}　${twText(TW.project_status, d.project.status)}</span>
-            <a href="#projects?id=${d.project.id}">看這個案子的全貌 →</a>
+            ${App.can('projects') ? `<a href="#projects?id=${d.project.id}">看這個案子的全貌 →</a>` : ''}
           </div>`
           + (active() ? `<div class="notice">已套用篩選，下面的清單只列出符合條件的資料；金額合計仍是全案。
               <button class="btn tiny secondary" id="fl-clear">清除篩選</button></div>` : '')
