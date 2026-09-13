@@ -557,6 +557,89 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   await req('DELETE', `/api/contracts/${bondCt.id}`);
   await req('DELETE', `/api/projects/${bondPj.id}`);
 
+  console.log('\nAI 助理：只能讀、照權限、Claude 與 ChatGPT 的工具循環');
+  const ai = require('../src/ai');
+  const aiBackup = (await req('GET', '/api/settings')).body;
+  const aiCtx = { cookie, port: PORT };
+  if (!aiBackup.ai_api_key_set && !aiBackup.ai_provider) {
+    eq('還沒設定就提問會被擋', (await req('POST', '/api/ai/chat', { messages: [{ role: 'user', content: '有幾個案子？' }] })).status, 400);
+  }
+  const allTools = ai.toolsFor({ role: 'admin', modules: [] });
+  const foremanTools = ai.toolsFor({ role: 'staff', modules: ['dashboard', 'projects', 'schedule', 'sitelog', 'tasks', 'vendors', 'subcontracts', 'materials', 'defects', 'warranty', 'drawings'] });
+  ok('工務拿不到收款與損益的查詢工具', !foremanTools.some(t => ['get_receivables', 'get_profit', 'list_quotes'].includes(t.name)));
+  ok('沒提供給這個人的工具叫不動', (await ai.execTool('get_profit', {}, foremanTools, aiCtx)).error);
+
+  // 工具帶的是提問者自己的 cookie：用工務登入後查案場詳情，照樣看不到毛利
+  await req('POST', '/api/logout');
+  await req('POST', '/api/login', { username: 'foreman', password: 'work123' });
+  eq('沒開 AI 模組的帳號不能用', (await req('GET', '/api/ai/status')).status, 403);
+  const fDetail = await ai.execTool('get_project_detail', { project_id: pj.id }, foremanTools, { cookie, port: PORT });
+  ok('AI 查案場詳情照工務權限（看不到毛利與收款）', !fDetail.error
+    && JSON.parse(fDetail.text).money.gross_profit === undefined && JSON.parse(fDetail.text).receipts.length === 0);
+  await req('POST', '/api/logout');
+  await req('POST', '/api/login', { username: 'admin', password: 'admin123' });
+  const adminCtx = { cookie, port: PORT };
+  ok('缺 project_id 時工具回報而不是亂查', (await ai.execTool('get_project_detail', {}, allTools, adminCtx)).error);
+
+  // 用假的模型回應驗證整個循環：第一輪要工具、第二輪回答
+  const claudeCalls = [];
+  const claudeStep = async p => {
+    claudeCalls.push(JSON.parse(JSON.stringify(p)));
+    return claudeCalls.length === 1
+      ? { stop_reason: 'tool_use', content: [{ type: 'text', text: '我查一下' }, { type: 'tool_use', id: 'tu_1', name: 'search_projects', input: { q: pj.code } }] }
+      : { stop_reason: 'end_turn', content: [{ type: 'text', text: '找到 1 個案子' }] };
+  };
+  const fakeClaude = { messages: { create: claudeStep }, beta: { messages: { create: claudeStep } } };
+  const outC = await ai.runAgent({
+    provider: 'claude', model: 'claude-opus-5', key: 'test', system: 's',
+    messages: [{ role: 'user', content: '這個案子在哪？' }], tools: allTools, client: fakeClaude,
+    exec: (n, i) => ai.execTool(n, i, allTools, adminCtx)
+  });
+  eq('Claude：查完工具後給出回覆', outC.reply, '找到 1 個案子');
+  const toolTurn = claudeCalls[1] && claudeCalls[1].messages[2];
+  ok('Claude：工具結果帶回下一輪而且查得到資料',
+    toolTurn && toolTurn.role === 'user' && toolTurn.content[0].type === 'tool_result'
+    && toolTurn.content[0].tool_use_id === 'tu_1' && toolTurn.content[0].content.includes(pj.code));
+  ok('Claude：assistant 回合原封不動放回歷史', claudeCalls[1].messages[1].content[1].type === 'tool_use');
+  eq('Claude Opus 5 預設開啟拒答備援', claudeCalls[0].fallbacks, 'default');
+  eq('Claude 拒答時不讀內容，給出友善訊息', (await ai.runAgent({
+    provider: 'claude', model: 'claude-opus-5', key: 'test', system: 's', messages: [{ role: 'user', content: 'x' }],
+    tools: allTools, exec: () => ({ error: false, text: '' }),
+    client: { beta: { messages: { create: async () => ({ stop_reason: 'refusal', content: [] }) } } }
+  })).reply.includes('無法回答'), true);
+
+  const openaiBodies = [];
+  const fakeFetch = async (url, opts) => {
+    openaiBodies.push(JSON.parse(opts.body));
+    const message = openaiBodies.length === 1
+      ? { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'search_projects', arguments: JSON.stringify({ q: pj.code }) } }] }
+      : { role: 'assistant', content: '共 1 案' };
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message, finish_reason: 'stop' }] }) };
+  };
+  const outO = await ai.runAgent({
+    provider: 'openai', model: 'test-model', key: 'test', system: 's',
+    messages: [{ role: 'user', content: '這個案子在哪？' }], tools: allTools, fetchImpl: fakeFetch,
+    exec: (n, i) => ai.execTool(n, i, allTools, adminCtx)
+  });
+  eq('ChatGPT：查完工具後給出回覆', outO.reply, '共 1 案');
+  ok('ChatGPT：工具結果帶回下一輪而且查得到資料',
+    openaiBodies[1].messages.some(m => m.role === 'tool' && m.tool_call_id === 'call_1' && m.content.includes(pj.code)));
+  ok('ChatGPT：系統提示放在第一則', openaiBodies[0].messages[0].role === 'system');
+
+  // 金鑰：不回傳、留空不清除、勾清除才刪。系統已經填過真金鑰時不動它
+  if (!aiBackup.ai_api_key_set) {
+    await req('PUT', '/api/settings', { ai_provider: 'claude', ai_model: '', ai_api_key: 'sk-test-secret-123' });
+    const sAfter = (await req('GET', '/api/settings')).body;
+    ok('API 金鑰不會回傳給前端', sAfter.ai_api_key_set === true && !JSON.stringify(sAfter).includes('sk-test-secret-123'));
+    const aiSt = (await req('GET', '/api/ai/status')).body;
+    ok('填好後狀態為就緒，Claude 預設 claude-opus-5', aiSt.ready === true && aiSt.model === 'claude-opus-5');
+    await req('PUT', '/api/settings', { ai_api_key: '' });
+    eq('存設定時金鑰欄留空不會清掉金鑰', (await req('GET', '/api/settings')).body.ai_api_key_set, true);
+    await req('PUT', '/api/settings', { ai_provider: aiBackup.ai_provider, ai_model: aiBackup.ai_model, ai_api_key_clear: 1 });
+    eq('勾清除才會刪掉金鑰', (await req('GET', '/api/settings')).body.ai_api_key_set, false);
+  }
+  eq('AI 服務商亂填被擋', (await req('PUT', '/api/settings', { ai_provider: 'gemini' })).status, 400);
+
   console.log('\n帳號刪除的三道防線');
   const me = (await req('GET', '/api/users')).body.find(u => u.username === 'admin');
   eq('不能刪除自己', (await req('DELETE', `/api/users/${me.id}`)).status, 400);

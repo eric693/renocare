@@ -11,7 +11,7 @@
 //   3. 圖示等靜態資源走 cache-first，那些東西不會變。
 //
 // 改版時把 VERSION 加一，舊快取會在啟用時清掉。
-const VERSION = 'renocare-v11';
+const VERSION = 'renocare-v12';
 const SHELL = `${VERSION}-shell`;
 const ASSETS = `${VERSION}-assets`;
 
@@ -34,6 +34,7 @@ const PRECACHE = [
   '/js/pages-money.js',
   '/js/pages-lists.js',
   '/js/pages-admin.js',
+  '/js/pages-ai.js',
   '/js/pwa.js',
   '/icons/icon-192.png',
 ];

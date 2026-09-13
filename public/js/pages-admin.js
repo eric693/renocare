@@ -168,11 +168,24 @@ App.page('settings', {
       ${row('license_expiry', '室內裝修業登記證有效期限', '格式 YYYY-MM-DD；到期前系統開待辦、儀表板會提醒')}
       ${row('tech_certs', '專業技術人員登記證', '格式「姓名:證別:到期日」，逗號分隔。例：王大明:專業設計技術人員:2028-05-31,陳小華:專業施工技術人員:2027-11-30', true)}
       ${row('license_alert_days', '證照到期提前提醒天數', '換證要準備文件，建議 60 天以上')}
+      <h4 class="form-sec">AI 助理</h4>
+      ${UI.select('ai_provider', 'AI 服務商', [['', '不使用'], ['claude', 'Claude（Anthropic）'], ['openai', 'ChatGPT（OpenAI）']],
+        { value: s.ai_provider || '', full: true })}
+      ${row('ai_model', '模型名稱', 'Claude 留空預設 claude-opus-5；ChatGPT 請填你的 OpenAI 帳號可用的模型名稱')}
+      <div class="form-row full"><label>API 金鑰</label>
+        <input name="ai_api_key" type="password" autocomplete="new-password"
+          placeholder="${s.ai_api_key_set ? '已設定（留空不變更）' : '貼上 API 金鑰'}">
+        <div class="muted">金鑰只存在伺服器，存檔後不會再顯示。Claude 金鑰到 platform.claude.com 申請，ChatGPT 金鑰到 platform.openai.com 申請。</div></div>
+      ${s.ai_api_key_set ? UI.checkbox('ai_api_key_clear', '清除已設定的 API 金鑰', 0, { full: true }) : ''}
+      <div class="muted" style="grid-column:1/-1">AI 助理只能查詢、不能修改資料，每個人查得到的範圍跟自己的帳號權限一樣。
+        要讓誰使用，到「帳號權限」勾選「AI 助理」模組。問題與查到的資料會送到所選的 AI 服務商處理。</div>
     </div>
     <div class="actions"><button class="btn" id="save">儲存設定</button></div></div>`;
     el.querySelector('#save').onclick = async () => {
       await PUT('/settings', UI.formData(el.querySelector('#st')));
       UI.toast('已儲存，重新整理後生效');
+      const keyInput = el.querySelector('[name=ai_api_key]');
+      if (keyInput && keyInput.value) { keyInput.value = ''; keyInput.placeholder = '已設定（留空不變更）'; }
       App.meta = await GET('/meta').catch(() => App.meta);
     };
   }

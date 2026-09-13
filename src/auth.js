@@ -12,6 +12,7 @@ const MODULES = [
   { key: 'schedule', label: '工進排程', group: '每日作業', hint: '工序相依與延誤連動，改一處後面自動推' },
   { key: 'sitelog', label: '工地日報與照片', group: '每日作業', hint: '每日出工、進度、現場照片留證' },
   { key: 'tasks', label: '待辦事項', group: '每日作業', hint: '個人與全公司待辦，含系統自動提醒' },
+  { key: 'ai', label: 'AI 助理', group: '每日作業', hint: '用問的查系統資料，範圍跟帳號權限一樣（只能查不能改）' },
 
   { key: 'customers', label: '客戶名單', group: '接案', hint: '業主資料、來源、承接紀錄' },
   { key: 'quotes', label: '估價單', group: '接案', hint: '多版本估價、成本與毛利預估' },

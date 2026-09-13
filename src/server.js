@@ -89,6 +89,7 @@ app.use('/api', require('./routes/vendors'));
 app.use('/api', require('./routes/schedule'));
 app.use('/api', require('./routes/site'));
 app.use('/api', require('./routes/quality'));
+app.use('/api', require('./routes/ai'));
 
 // ---- 靜態檔案 ----
 

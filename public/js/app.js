@@ -123,7 +123,7 @@ const App = {
   },
 
   navGroups: [
-    { label: '每日作業', keys: ['dashboard', 'mytasks', 'projects', 'schedule', 'sitelog', 'tasks'] },
+    { label: '每日作業', keys: ['dashboard', 'mytasks', 'projects', 'schedule', 'sitelog', 'tasks', 'ai'] },
     { label: '接案', keys: ['customers', 'quotes', 'unitprices'] },
     { label: '合約與收款', keys: ['changes', 'billing', 'receivables'] },
     { label: '發包', keys: ['vendors', 'subcontracts', 'payables', 'materials'] },

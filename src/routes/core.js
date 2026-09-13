@@ -39,14 +39,26 @@ router.get('/settings', requireStaff('settings'), (req, res) => {
   for (const k of UI_TEXT_KEYS) out[k] = getSetting(k, '');
   out.audit_retention_days = getSetting('audit_retention_days', '730');
   out.alert_days = getSetting('alert_days', '7');
+  // AI 設定：金鑰永遠不回傳，只告訴前端「有沒有設定」
+  out.ai_provider = getSetting('ai_provider', '');
+  out.ai_model = getSetting('ai_model', '');
+  out.ai_api_key_set = !!getSetting('ai_api_key', '');
   res.json(out);
 });
 
 router.put('/settings', requireStaff('settings'), (req, res) => {
-  const allowed = new Set([...Object.keys(DEFAULT_LISTS), ...UI_TEXT_KEYS, 'audit_retention_days', 'alert_days']);
-  for (const [k, v] of Object.entries(req.body || {})) {
-    if (allowed.has(k)) setSetting(k, String(v ?? ''));
+  const b = req.body || {};
+  if (b.ai_provider !== undefined && !['', 'claude', 'openai'].includes(b.ai_provider)) {
+    return res.status(400).json({ error: 'AI 服務商只能選 Claude 或 ChatGPT' });
   }
+  const allowed = new Set([...Object.keys(DEFAULT_LISTS), ...UI_TEXT_KEYS, 'audit_retention_days', 'alert_days',
+    'ai_provider', 'ai_model']);
+  for (const [k, v] of Object.entries(b)) {
+    if (allowed.has(k)) setSetting(k, String(v ?? '').trim());
+  }
+  // 金鑰：有填才更新（設定頁不會把舊金鑰帶回來，留空代表不變更）；勾「清除」才刪掉
+  if (Number(b.ai_api_key_clear) === 1) setSetting('ai_api_key', '');
+  else if (typeof b.ai_api_key === 'string' && b.ai_api_key.trim()) setSetting('ai_api_key', b.ai_api_key.trim());
   audit('staff', req.user.id, req.user.name, '修改系統設定');
   res.json({ ok: true });
 });
