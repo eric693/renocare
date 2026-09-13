@@ -8,7 +8,8 @@ App.page('vendors', {
     intro: '派工前要知道三件事：這家做什麼、做得好不好、保險有沒有過期。保險過期的工班在現場出事，責任會回到公司身上。',
     steps: ['新增廠商 → 選工種與類型（工班／材料商／兩者都是）。',
       '責任險到期日一定要填，過期的會在清單上標紅。',
-      '每次合作完更新評價，下次發包時這一欄就有用了。'],
+      '每次合作完更新評價，下次發包時這一欄就有用了。',
+      '「請款身分」選個人的工班，估驗付款與退保留款時會自動算出代扣所得稅、二代健保補充保費與實際匯款金額。'],
     notes: ['「在手缺失」是這家工班還沒改善完的缺失件數，發包前先看一眼。']
   },
   async render(el) {
@@ -33,7 +34,8 @@ App.page('vendors', {
       box.innerHTML = UI.table(['名稱', '類型／工種', '聯絡', '評價', '責任險到期', '承接', '在手缺失', ''],
         rows.map(r => `<tr class="${r.active ? '' : 'dim'}">
         <td><strong>${UI.esc(r.name)}</strong>${r.tax_id ? `<div class="muted">統編 ${UI.esc(r.tax_id)}</div>` : ''}</td>
-        <td>${twText(TW.vendor_kind, r.kind)}<div class="muted">${UI.esc(r.trade || '')}</div></td>
+        <td>${twText(TW.vendor_kind, r.kind)}<div class="muted">${UI.esc(r.trade || '')}</div>
+          ${r.payee_type === 'individual' ? '<div class="muted">個人・付款代扣</div>' : ''}</td>
         <td>${UI.esc(r.contact || '')}<div class="muted">${UI.esc(r.phone || '')}</div></td>
         <td>${r.rating ? '★'.repeat(r.rating) : '—'}</td>
         <td class="nowrap ${r.insurance_expired ? 'danger' : ''}">${UI.date(r.liability_expiry)}
@@ -47,6 +49,7 @@ App.page('vendors', {
       UI.bindCsv(act, 'vendors', '工班與廠商', [
         ['名稱', r => r.name], ['類型', r => twText(TW.vendor_kind, r.kind)], ['工種', r => r.trade],
         ['聯絡人', r => r.contact], ['電話', r => r.phone], ['統一編號', r => r.tax_id],
+        ['請款身分', r => r.payee_type === 'individual' ? '個人' : '公司行號'],
         ['匯款帳戶', r => r.bank_info], ['評價', r => r.rating],
         ['責任險到期', r => r.liability_expiry], ['責任險已過期', r => r.insurance_expired ? '是' : ''],
         ['勞保', r => r.labor_insured ? '已投保' : '未投保'],
@@ -75,6 +78,7 @@ function vendorDialog(row, done) {
       ${UI.input('contact', '聯絡人', { value: row ? row.contact : '' })}
       ${UI.input('phone', '電話', { value: row ? row.phone : '' })}
       ${UI.input('tax_id', '統一編號', { value: row ? row.tax_id : '' })}
+      ${UI.select('payee_type', '請款身分', twOpts(TW.payee_type), { value: row ? row.payee_type : 'company' })}
       ${UI.input('bank_info', '匯款帳戶', { value: row ? row.bank_info : '', full: true })}
       ${UI.input('rating', '評價（1-5）', { type: 'number', value: row ? row.rating : 0 })}
       ${UI.input('liability_expiry', '責任險到期日', { type: 'date', value: row ? row.liability_expiry : '' })}

@@ -230,6 +230,7 @@ async function renderProjectDetail(el, id) {
       </div>
       ${m.change_pending ? `<div class="notice warn">有 ${m.change_sent_count + m.change_draft_count} 張追加減帳還沒簽認，合計
         ${UI.fmtMoney(m.change_pending)}。<b>未簽認的金額不算在上面的合約總價裡</b> —— 先讓業主簽，再叫師傅做。</div>` : ''}
+      ${penaltyNotice(m)}
       ${m.milestone_gap && App.can('billing') ? `<div class="notice warn">請款節點加起來比原合約少 ${UI.fmtMoney(m.milestone_gap)}，
         代表有一段合約金額沒有安排請款時機，檢查一下節點比例。</div>` : ''}
       ${m.cost_variance > 0 ? `<div class="notice warn">實際成本已經比當初估價高出 ${UI.fmtMoney(m.cost_variance)}

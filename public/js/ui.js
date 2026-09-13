@@ -384,6 +384,7 @@ const TW = {
   priority: { low: '低', normal: '一般', high: '高' },
   photo_phase: { before: '施工前', during: '施工中', after: '完工', defect: '缺失', hidden: '隱蔽工程' },
   vendor_kind: { sub: '工班', supplier: '材料商', both: '工班＋材料' },
+  payee_type: { company: '公司行號（開發票，不代扣）', individual: '個人（付款代扣所得稅與補充保費）' },
   release_kind: { retention: '保留款', warranty: '保固保證金' }
 };
 const twOpts = obj => Object.entries(obj).map(([k, v]) => [k, v]);

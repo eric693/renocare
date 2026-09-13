@@ -99,7 +99,11 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
     (await req('PUT', `/api/changes/${co.id}`, { title: '偷改' })).status === 400);
 
   console.log('\n請款節點與逾期');
+  // 範本是使用者可以改的設定；測試固定一組比例當算式的固定值，數字才不會跟著設定跑
+  const tplBackup = (await req('GET', '/api/settings')).body.milestone_template;
+  await req('PUT', '/api/settings', { milestone_template: '訂金:30,開工款:30,木作進場:20,完工驗收:15,交屋尾款:5' });
   await req('POST', '/api/milestones/apply-template', { project_id: pj.id });
+  await req('PUT', '/api/settings', { milestone_template: tplBackup });
   det = (await req('GET', `/api/projects/${pj.id}/detail`)).body;
   const ms = det.money.milestones;
   eq('節點金額＝原合約 × 比例（訂金 30%）', ms[0].amount, 36000);
@@ -231,6 +235,60 @@ const eq = (name, a, b) => ok(`${name}（${a} = ${b}）`, a === b);
   await req('POST', `/api/valuations/${vc.id}/pay`, {});
   ed = await req('PUT', `/api/valuations/${vc.id}`, { cum_progress: 90 });
   ok('已付款的估驗不能改', ed.status === 400, ed.body && ed.body.error);
+
+  console.log('\n付給個人工班：代扣所得稅與二代健保補充保費');
+  const st = (await req('GET', '/api/settings')).body;
+  // 照設定算期望值，使用者調過比例或門檻也驗得對
+  const expectWh = base => {
+    const tax = base > Number(st.withhold_over) ? Math.floor(base * Number(st.withhold_pct) / 100) : 0;
+    const nhi = base >= Number(st.nhi_from) ? Math.round(base * Number(st.nhi_pct) / 100) : 0;
+    return { tax, nhi, pay: base - tax - nhi };
+  };
+  const vInd = (await req('POST', '/api/vendors', { name: '測試個人泥作', kind: 'sub', trade: '泥作', payee_type: 'individual' })).body.id;
+  eq('請款身分亂填當成公司行號',
+    (await req('POST', '/api/vendors', { name: '測試身分亂填', payee_type: 'xx' })).status === 200 &&
+    (await req('GET', `/api/vendors?q=${encodeURIComponent('測試身分亂填')}`)).body[0].payee_type, 'company');
+  const scI = (await req('POST', '/api/subcontracts', {
+    project_id: pj.id, vendor_id: vInd, trade: '泥作', retention_pct: 10, warranty_pct: 0, status: 'signed'
+  })).body;
+  await req('PUT', `/api/subcontracts/${scI.id}/amount`, { amount: 1000000 });
+  const vi1 = (await req('POST', `/api/subcontracts/${scI.id}/valuations`, { cum_progress: 30 })).body;
+  eq('個人工班估驗應付（300000 − 保留款 30000）', vi1.net, 270000);
+  eq('代扣所得稅', vi1.tax_withheld, expectWh(270000).tax);
+  eq('代扣二代健保補充保費', vi1.nhi_withheld, expectWh(270000).nhi);
+  eq('實匯＝應付 − 代扣', vi1.pay_amount, expectWh(270000).pay);
+  const vi2 = (await req('POST', `/api/subcontracts/${scI.id}/valuations`, { cum_progress: 31 })).body;
+  eq('小額給付（9000）依門檻不代扣', vi2.tax_withheld + vi2.nhi_withheld, expectWh(9000).tax + expectWh(9000).nhi);
+  ed = await req('PUT', `/api/valuations/${vi2.id}`, { cum_progress: 40 });
+  eq('改估驗後代扣跟著重算（應付 90000）', ed.body.pay_amount, expectWh(90000).pay);
+  const relI = await req('POST', `/api/subcontracts/${scI.id}/release`, { kind: 'retention', amount: 40000 });
+  eq('退保留款成功', relI.status, 200);
+  const subI = (await req('GET', `/api/subcontracts/${scI.id}`)).body;
+  eq('退保留款也代扣', subI.releases[0].pay_amount, expectWh(40000).pay);
+  const apI = (await req('GET', `/api/payables?vendor_id=${vInd}`)).body;
+  eq('應付頁的實匯合計', apI.sum_pay, apI.rows.reduce((a, r) => a + r.pay_amount, 0));
+  ok('應付頁列出代扣', apI.rows.some(r => r.tax_withheld > 0));
+  const subCo = (await req('GET', `/api/subcontracts/${sc2.id}`)).body;
+  ok('公司行號不代扣，實匯等於應付',
+    subCo.valuations.every(v => v.tax_withheld === 0 && v.nhi_withheld === 0 && v.pay_amount === v.net_amount));
+
+  console.log('\n工期遲延違約金（內政部室內裝修契約範本）');
+  det = (await req('GET', `/api/projects/${pj.id}/detail`)).body;
+  let mm = det.money;
+  ok('逾期天數算得出來', mm.delay_days > 0, `due ${det.project.due_date}`);
+  eq('合約沒約定每日金額時用合約總價千分之幾', mm.penalty_per_day,
+    Math.round(mm.contract_total * Number(st.penalty_permille) / 1000));
+  eq('違約金上限＝合約總價 × 上限％', mm.penalty_cap, Math.round(mm.contract_total * Number(st.penalty_cap_pct) / 100));
+  eq('違約金＝天數 × 每日，但不超過上限', mm.penalty_amount, Math.min(mm.delay_days * mm.penalty_per_day, mm.penalty_cap));
+  const ct0 = det.contracts[0];
+  await req('PUT', `/api/contracts/${ct0.id}`, { penalty_per_day: 100 });
+  mm = (await req('GET', `/api/projects/${pj.id}/detail`)).body.money;
+  eq('合約有約定每日金額就照合約', mm.penalty_per_day, 100);
+  eq('照合約計算', mm.penalty_amount, Math.min(mm.delay_days * 100, mm.penalty_cap));
+  await req('PUT', `/api/contracts/${ct0.id}`, { penalty_per_day: 0 });
+  await req('PUT', `/api/projects/${pj.id}`, { actual_end_date: det.project.due_date });
+  eq('如期完工沒有違約金', (await req('GET', `/api/projects/${pj.id}/detail`)).body.money.penalty_amount, 0);
+  await req('PUT', `/api/projects/${pj.id}`, { actual_end_date: '' });
 
   console.log('\n修改收款與變更明細');
   det = (await req('GET', `/api/projects/${pj.id}/detail`)).body;

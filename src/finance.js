@@ -11,7 +11,7 @@
 //             看起來每一件都很賺，到結案才發現不是。
 //   保留款／保固金只是「還沒付」，不是「不用付」，所以不從成本扣，只另外列出金額。
 
-const { db, today } = require('./db');
+const { db, today, getSetting, dateDiff } = require('./db');
 
 // 一張請款節點的金額：依比例的算「原合約金額 × ％」，固定金額的直接用。
 // 追加減帳不進節點比例（追加通常是另外結算），而是以「已簽認追加」整筆列為應收。
@@ -36,6 +36,20 @@ function projectMoney(projectId) {
     FROM change_orders WHERE project_id = ?`).get(projectId);
 
   const contractTotal = contractAmount + chg.signed;
+
+  // ---- 工期遲延違約金 ----
+  // 依內政部室內裝修工程承攬契約範本：每逾 1 日課工程總價千分之一，總額以合約總價 10% 為限。
+  // 合約有約定每日金額就照合約。這是「業主可以主張」的風險，不是已發生的成本，所以不扣進毛利。
+  // 完工日已含簽認過的追加展延天數（見 changes.js），業主原因的延誤要走那條路才會往後。
+  const proj = db.prepare('SELECT due_date, actual_end_date FROM projects WHERE id = ?').get(projectId) || {};
+  const agreedPerDay = one(
+    "SELECT COALESCE(SUM(penalty_per_day),0) AS v FROM contracts WHERE project_id = ? AND status = 'active'").v || 0;
+  const delayDays = proj.due_date && contractAmount
+    ? Math.max(0, dateDiff(proj.due_date, proj.actual_end_date || t)) : 0;
+  const penaltyPerDay = agreedPerDay
+    || Math.round(contractTotal * (Number(getSetting('penalty_permille', '1')) || 0) / 1000);
+  const penaltyCap = Math.round(contractTotal * (Number(getSetting('penalty_cap_pct', '10')) || 0) / 100);
+  const penaltyAmount = Math.min(delayDays * penaltyPerDay, penaltyCap);
 
   // ---- 收款側 ----
   const milestones = db.prepare(
@@ -113,6 +127,13 @@ function projectMoney(projectId) {
     change_sent_count: chg.sent_count,
     change_draft_count: chg.draft_count,
     contract_total: contractTotal,
+
+    delay_days: delayDays,
+    penalty_basis: agreedPerDay ? 'contract' : 'template',
+    penalty_per_day: penaltyPerDay,
+    penalty_cap: penaltyCap,
+    penalty_amount: penaltyAmount,
+    penalty_capped: penaltyCap > 0 && delayDays * penaltyPerDay >= penaltyCap,
 
     milestones,
     milestone_total: msTotal,

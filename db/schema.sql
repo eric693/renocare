@@ -251,6 +251,7 @@ CREATE TABLE IF NOT EXISTS vendors (
   rating INTEGER NOT NULL DEFAULT 0,             -- 1-5
   liability_expiry TEXT NOT NULL DEFAULT '',     -- 營繕承包／意外責任險到期日（沒保出事是公司扛）
   labor_insured INTEGER NOT NULL DEFAULT 0,      -- 是否有投保勞保／職災
+  payee_type TEXT NOT NULL DEFAULT 'company',    -- company 公司行號（開發票）／individual 個人（付款要代扣稅與補充保費）
   note TEXT NOT NULL DEFAULT '',
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -301,7 +302,10 @@ CREATE TABLE IF NOT EXISTS valuations (
   warranty_hold INTEGER NOT NULL DEFAULT 0,      -- 本期扣保固金
   deduction INTEGER NOT NULL DEFAULT 0,          -- 其他扣款（罰款、代購材料、清潔費）
   deduct_note TEXT NOT NULL DEFAULT '',
-  net_amount INTEGER NOT NULL DEFAULT 0,         -- 實付
+  net_amount INTEGER NOT NULL DEFAULT 0,         -- 應付工班（扣完保留款、保固金、其他扣款）
+  tax_withheld INTEGER NOT NULL DEFAULT 0,       -- 代扣所得稅（個人工班）
+  nhi_withheld INTEGER NOT NULL DEFAULT 0,       -- 代扣二代健保補充保費（個人工班）
+  pay_amount INTEGER NOT NULL DEFAULT 0,         -- 實際匯款 = 應付 − 代扣
   status TEXT NOT NULL DEFAULT 'draft',          -- draft／confirmed 已確認／paid 已付款
   paid_date TEXT NOT NULL DEFAULT '',
   note TEXT NOT NULL DEFAULT '',
@@ -317,6 +321,9 @@ CREATE TABLE IF NOT EXISTS retention_releases (
   kind TEXT NOT NULL DEFAULT 'retention',        -- retention 保留款／warranty 保固金
   date TEXT NOT NULL DEFAULT '',
   amount INTEGER NOT NULL DEFAULT 0,
+  tax_withheld INTEGER NOT NULL DEFAULT 0,
+  nhi_withheld INTEGER NOT NULL DEFAULT 0,
+  pay_amount INTEGER NOT NULL DEFAULT 0,
   note TEXT NOT NULL DEFAULT ''
 );
 

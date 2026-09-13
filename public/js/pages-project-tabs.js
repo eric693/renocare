@@ -33,20 +33,22 @@ TABS.money = d => {
       <td>${UI.date(c.sign_date)}</td>
       <td class="num">${money(c.amount)}</td>
       <td>${c.work_days ? c.work_days + ' 天' : '—'}</td>
-      <td class="num">${c.penalty_per_day ? money(c.penalty_per_day) : '—'}</td>
+      <td class="num">${c.penalty_per_day ? money(c.penalty_per_day) : '<span class="muted">依範本千分之一</span>'}</td>
       <td class="nowrap"><button class="btn tiny secondary" data-ctedit="${c.id}">編輯</button>
         <button class="btn tiny secondary" data-ctdel="${c.id}">刪除</button></td>
     </tr>`), '還沒有合約。可以從估價單標「已成交」自動產生，或在這裡手動新增。')}
     <div class="muted" style="margin-top:8px">已簽認追加減帳 ${money(m.change_signed)}，
       合約總價 <b>${money(m.contract_total)}</b></div>
+    ${penaltyNotice(m)}
   </div>
 
   <div class="card">
     <div class="card-head"><h3>請款節點</h3>
       <span><button class="btn small secondary" id="ms-tpl">套用範本</button>
       <button class="btn small" id="ms-add">新增節點</button></span></div>
+    ${milestoneCapNotice(d.allMilestones || m.milestones)}
     ${UI.table(['節點', '應請金額', '已收', '未收', '狀態', ''], msRows,
-    '還沒安排請款節點。按「套用範本」可以一次帶入訂金／開工／木作進場／驗收／尾款。')}
+    '還沒安排請款節點。按「套用範本」可以一次帶入簽約金／各階段／完工清潔／驗收交屋。')}
     <div class="muted" style="margin-top:8px">
       節點可以綁工序：綁了之後，那道工序一開工（或完工），系統隔天就會自動提醒你開單請款。</div>
   </div>
@@ -146,6 +148,28 @@ TABBIND.money = (el, d, reload) => {
   });
 };
 
+// 內政部「建築物室內裝修－工程承攬契約書範本」的付款上限：簽約金 ≤5%，各階段單期 ≤30%，
+// 餘款在驗收並取得室內裝修合格證明後支付。範本不是強制規定，但跟業主有爭議時常被拿來對照，所以只提醒不擋。
+function milestoneCapNotice(ms) {
+  const pct = (ms || []).filter(x => x.basis === 'percent');
+  if (!pct.length) return '';
+  const issues = [];
+  if (pct[0].percent > 5) issues.push(`第一期「${pct[0].name}」${pct[0].percent}%，範本簽約金最多 5%`);
+  pct.slice(1).filter(x => x.percent > 30).forEach(x => issues.push(`「${x.name}」${x.percent}%，範本單期最多 30%`));
+  return issues.length ? `<div class="notice warn">請款比例跟內政部室內裝修契約範本有落差：${UI.esc(issues.join('；'))}。
+    範本的尾款在驗收並取得室內裝修合格證明後才付，前面收太多，發生爭議時對公司不利。</div>` : '';
+}
+
+// 工期遲延違約金：業主可以主張的風險，不是已發生的成本（見 finance.js）
+function penaltyNotice(m) {
+  if (!m || !m.penalty_amount) return '';
+  const basis = m.penalty_basis === 'contract' ? '合約約定' : '契約範本（工程總價千分之一）';
+  return `<div class="notice warn">工期已逾 <b>${m.delay_days}</b> 天。依${basis}每日 ${money(m.penalty_per_day)} 計，
+    業主可主張的遲延違約金約 <b>${money(m.penalty_amount)}</b>${m.penalty_capped
+      ? `，已達上限 ${money(m.penalty_cap)}` : `（上限 ${money(m.penalty_cap)}）`}。
+    業主原因或不可歸責於公司的延誤，請開追加減帳填「展延天數」讓業主簽認，完工日才會往後。</div>`;
+}
+
 function contractDialog(pid, row, done) {
   UI.modal({
     title: row ? '編輯合約' : '新增合約',
@@ -155,7 +179,7 @@ function contractDialog(pid, row, done) {
       ${UI.input('sign_date', '簽約日', { type: 'date', value: row ? row.sign_date : UI.today() })}
       ${UI.input('amount', '合約金額（含稅）', { type: 'number', value: row ? row.amount : '' })}
       ${UI.input('work_days', '約定工期（日曆天）', { type: 'number', value: row ? row.work_days : '' })}
-      ${UI.input('penalty_per_day', '逾期違約金／日', { type: 'number', value: row ? row.penalty_per_day : '' })}
+      ${UI.input('penalty_per_day', '逾期違約金／日（留空＝依範本合約總價千分之一）', { type: 'number', value: row && row.penalty_per_day ? row.penalty_per_day : '' })}
       ${UI.textarea('note', '備註', { value: row ? row.note : '' })}
     </div>`,
     onSubmit: async el => {

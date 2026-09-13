@@ -14,8 +14,14 @@ const router = express.Router();
 
 // ---- 工班／廠商 ----
 
-const pickVendor = picker(['name', 'kind', 'trade', 'contact', 'phone', 'tax_id', 'bank_info', 'rating',
-  'liability_expiry', 'labor_insured', 'note', 'active'], ['rating', 'labor_insured', 'active']);
+const pickVendorFields = picker(['name', 'kind', 'trade', 'contact', 'phone', 'tax_id', 'bank_info', 'rating',
+  'liability_expiry', 'labor_insured', 'payee_type', 'note', 'active'], ['rating', 'labor_insured', 'active']);
+// 請款身分只有兩種；打錯的值一律當公司行號，不要默默變成扣錯稅
+function pickVendor(body) {
+  const v = pickVendorFields(body);
+  if (v.payee_type !== undefined && v.payee_type !== 'individual') v.payee_type = 'company';
+  return v;
+}
 
 // 這支刻意不綁模組權限：缺失要選責任工班、訂料要選廠商、雜支要選廠商，
 // 這些模組的人都需要工班名單。但「需要一份名單」不等於「可以看匯款帳戶」——
@@ -71,7 +77,7 @@ const pickSub = picker(['project_id', 'vendor_id', 'trade', 'scope', 'retention_
   ['project_id', 'vendor_id'], ['retention_pct', 'warranty_pct']);
 
 function subDetail(id) {
-  const s = db.prepare(`SELECT s.*, v.name AS vendor_name, v.phone AS vendor_phone, p.name AS project_name, p.code AS project_code
+  const s = db.prepare(`SELECT s.*, v.name AS vendor_name, v.phone AS vendor_phone, v.payee_type, p.name AS project_name, p.code AS project_code
     FROM subcontracts s LEFT JOIN vendors v ON v.id = s.vendor_id JOIN projects p ON p.id = s.project_id
     WHERE s.id = ?`).get(id);
   if (!s) return null;
@@ -269,7 +275,9 @@ router.post('/subcontracts/:id/valuations', requireStaff('subcontracts'), (req, 
   const net = gross - retention - warranty - deduction;
   if (net < 0) return res.status(400).json({ error: '扣款金額大於本期估驗，實付會變成負數，請確認' });
 
+  const wh = withholding(s.vendor_id, net);
   const v = {
+    ...wh,
     subcontract_id: s.id,
     period: String(b.period || '').trim() || require('../db').thisMonth(),
     date: String(b.date || '').trim() || today(),
@@ -286,8 +294,23 @@ router.post('/subcontracts/:id/valuations', requireStaff('subcontracts'), (req, 
   if (cum >= 100 && s.status !== 'settled') db.prepare("UPDATE subcontracts SET status = 'done' WHERE id = ?").run(s.id);
   else if (s.status === 'signed') db.prepare("UPDATE subcontracts SET status = 'working' WHERE id = ?").run(s.id);
   audit('staff', req.user.id, req.user.name, '估驗計價', s.no, `累計 ${cum}%，本期 ${gross}，實付 ${net}`);
-  res.json({ id, gross, retention, warranty_hold: warranty, deduction, net });
+  res.json({ id, gross, retention, warranty_hold: warranty, deduction, net, ...wh });
 });
+
+// 付給個人工班的代扣：所得稅（執行業務所得）單次給付「超過」門檻才扣，稅額角以下捨去；
+// 二代健保補充保費單次給付「達」門檻就扣，四捨五入到元。公司行號開發票，不必代扣。
+// 比例與門檻都在系統設定（見 db.js DEFAULT_LISTS），法規調整時改設定即可。
+// base 是這一次實際要付給工班的金額（估驗的應付、或退還的保留款）。
+function withholding(vendorId, base) {
+  const vendor = vendorId ? get('vendors', vendorId) : null;
+  if (!vendor || vendor.payee_type !== 'individual' || base <= 0) {
+    return { tax_withheld: 0, nhi_withheld: 0, pay_amount: base };
+  }
+  const n = (k, d) => Number(getSetting(k, d)) || 0;
+  const tax = base > n('withhold_over', '20000') ? Math.floor(base * n('withhold_pct', '10') / 100) : 0;
+  const nhi = base >= n('nhi_from', '20000') ? Math.round(base * n('nhi_pct', '2.11') / 100) : 0;
+  return { tax_withheld: tax, nhi_withheld: nhi, pay_amount: base - tax - nhi };
+}
 
 // 缺失求償寫進扣款說明的格式；編輯估驗時要靠它把自動產生的說明與手填的分開
 function defectNote(d) { return `${d.location}${d.item} ${d.cost}`; }
@@ -324,7 +347,9 @@ router.put('/valuations/:id', requireStaff('subcontracts'), (req, res) => {
   const oldNote = v.deduct_note.split('；').filter(x => x && !auto.has(x)).join('；');
   const note = b.deduct_note !== undefined ? String(b.deduct_note).trim() : oldNote;
 
+  const wh = withholding(s.vendor_id, net);
   update('valuations', v.id, {
+    ...wh,
     period: b.period !== undefined ? String(b.period).trim() || v.period : v.period,
     date: b.date !== undefined ? String(b.date).trim() || v.date : v.date,
     cum_progress: cum, cum_amount: cumAmount, gross_amount: gross,
@@ -337,7 +362,7 @@ router.put('/valuations/:id', requireStaff('subcontracts'), (req, res) => {
   if (cum >= 100 && s.status !== 'settled') db.prepare("UPDATE subcontracts SET status = 'done' WHERE id = ?").run(s.id);
   else if (cum < 100 && s.status === 'done') db.prepare("UPDATE subcontracts SET status = 'working' WHERE id = ?").run(s.id);
   audit('staff', req.user.id, req.user.name, '修改估驗', s.no, `累計 ${v.cum_progress}% → ${cum}%，實付 ${v.net_amount} → ${net}`);
-  res.json({ gross, retention, warranty_hold: warranty, deduction, net });
+  res.json({ gross, retention, warranty_hold: warranty, deduction, net, ...wh });
 });
 
 router.post('/valuations/:id/pay', requireStaff('subcontracts'), (req, res) => {
@@ -376,7 +401,7 @@ router.post('/subcontracts/:id/release', requireStaff('subcontracts'), (req, res
     return res.status(400).json({ error: `這家工班在本案還有 ${open} 件缺失沒改善完。確定要退就再按一次` });
   }
   const id = insert('retention_releases', {
-    subcontract_id: s.id, kind, amount,
+    subcontract_id: s.id, kind, amount, ...withholding(s.vendor_id, amount),
     date: String(req.body.date || '').trim() || today(),
     note: String(req.body.note || '').trim()
   });
@@ -394,6 +419,7 @@ router.get('/payables', requireStaff('subcontracts'), (req, res) => {
   const { vendor_id = '', project_id = '', q = '' } = req.query;
   const kw = String(q).trim(), like = `%${kw}%`;
   const rows = db.prepare(`SELECT v.id, v.date, v.period, v.gross_amount, v.net_amount, v.status, v.paid_date,
+      v.tax_withheld, v.nhi_withheld, v.pay_amount, ve.payee_type,
       s.no, s.trade, s.project_id, p.name AS project_name, p.code AS project_code,
       ve.name AS vendor_name, ve.phone AS vendor_phone
     FROM valuations v JOIN subcontracts s ON s.id = v.subcontract_id
@@ -414,7 +440,9 @@ router.get('/payables', requireStaff('subcontracts'), (req, res) => {
     .all(vendor_id, vendor_id, kw, like);
   res.json({
     rows, held,
-    sum: rows.reduce((a, r) => a + r.net_amount, 0)
+    sum: rows.reduce((a, r) => a + r.net_amount, 0),
+    sum_withheld: rows.reduce((a, r) => a + r.tax_withheld + r.nhi_withheld, 0),
+    sum_pay: rows.reduce((a, r) => a + r.pay_amount, 0)
   });
 });
 

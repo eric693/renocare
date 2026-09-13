@@ -76,7 +76,8 @@ App.page('payables', {
     steps: ['「待付估驗單」是已經確認、還沒匯錢出去的 —— 匯完按「登錄付款」。',
       '要看整張發包單的話點該列的「發包單」，會帶到那個案子的發包分頁。',
       '「各工班押款」是目前押在手上的錢；要退的話到發包單明細按「退保留款」或「退保固金」。'],
-    notes: ['工班完工後保留款沒退，系統會每天提醒 —— 這關係到下一次找不找得到人。']
+    notes: ['工班完工後保留款沒退，系統會每天提醒 —— 這關係到下一次找不找得到人。',
+      '個人工班的估驗會自動代扣所得稅與二代健保補充保費：「實匯」是要匯給工班的錢，「代扣」要由公司申報繳納。比例與門檻在系統設定裡改。']
   },
   async render(el) {
     const state = { vendor_id: '', project_id: '', q: '' };
@@ -94,19 +95,25 @@ App.page('payables', {
       const d = await GET('/payables' + App.qs(state));
       box.innerHTML = `
         <div class="stat-grid">
-          ${stat(UI.fmtMoney(d.sum), '估驗已確認待付', d.sum ? 'warn' : '')}
+          ${stat(UI.fmtMoney(d.sum), '估驗已確認待付', d.sum ? 'warn' : '', '',
+            d.sum_withheld ? `其中代扣 ${UI.fmtShort(d.sum_withheld)}，實匯 ${UI.fmtShort(d.sum_pay)}` : '')}
           ${stat(UI.fmtMoney(d.held.reduce((a, h) => a + h.retention_held, 0)), '押著的保留款')}
           ${stat(UI.fmtMoney(d.held.reduce((a, h) => a + h.warranty_held, 0)), '押著的保固金')}
         </div>
         <div class="card">
           <div class="card-head"><h3>待付估驗單</h3>${UI.csvBtn('ap')}</div>
-          ${UI.table(['估驗日', '案場', '工班', '工種', '本期估驗', '實付', ''], d.rows.map(r => `<tr>
+          ${UI.table(['估驗日', '案場', '工班', '工種', '本期估驗', '應付', '代扣', '實匯', ''], d.rows.map(r => `<tr>
             <td class="nowrap">${UI.date(r.date)}<div class="muted">${UI.esc(r.period)}</div></td>
             <td>${UI.esc(r.project_name)}<div class="muted">${UI.esc(r.project_code)}</div></td>
-            <td>${UI.esc(r.vendor_name || '—')}<div class="muted">${UI.esc(r.vendor_phone || '')}</div></td>
+            <td>${UI.esc(r.vendor_name || '—')}<div class="muted">${UI.esc(r.vendor_phone || '')}
+              ${r.payee_type === 'individual' ? '・個人' : ''}</div></td>
             <td>${UI.esc(r.trade || '')}</td>
             <td class="num muted">${UI.fmtMoney(r.gross_amount)}</td>
-            <td class="num"><strong>${UI.fmtMoney(r.net_amount)}</strong></td>
+            <td class="num">${UI.fmtMoney(r.net_amount)}</td>
+            <td class="num muted">${r.tax_withheld || r.nhi_withheld
+              ? `-${UI.fmtMoney(r.tax_withheld + r.nhi_withheld)}<div class="muted">稅 ${UI.fmtMoney(r.tax_withheld)}／健保 ${UI.fmtMoney(r.nhi_withheld)}</div>`
+              : '—'}</td>
+            <td class="num"><strong>${UI.fmtMoney(r.pay_amount)}</strong></td>
             <td class="nowrap"><button class="btn tiny" data-pay="${r.id}">登錄付款</button>
             <a class="btn tiny secondary" href="#subcontracts?project_id=${r.project_id}">發包單</a></td>
           </tr>`), '沒有待付的估驗單')}
@@ -124,7 +131,9 @@ App.page('payables', {
         ['估驗日', r => r.date], ['期別', r => r.period], ['發包單號', r => r.no],
         ['案場', r => r.project_name], ['案場代號', r => r.project_code],
         ['工班', r => r.vendor_name], ['工班電話', r => r.vendor_phone], ['工種', r => r.trade],
-        ['本期估驗', r => r.gross_amount], ['實付', r => r.net_amount],
+        ['本期估驗', r => r.gross_amount], ['應付', r => r.net_amount],
+        ['請款身分', r => r.payee_type === 'individual' ? '個人' : '公司行號'],
+        ['代扣所得稅', r => r.tax_withheld], ['代扣補充保費', r => r.nhi_withheld], ['實匯', r => r.pay_amount],
         ['狀態', r => twText(TW.val_status, r.status)]
       ], d.rows);
       UI.bindCsv(box, 'held', '各工班押款', [

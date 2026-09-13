@@ -50,6 +50,15 @@ function subDialog(pid, row, done) {
   });
 }
 
+// 代扣欄：沒代扣顯示「—」，有的話拆成所得稅與補充保費，對帳時才看得出各是多少
+function withheldCell(x) {
+  const w = (x.tax_withheld || 0) + (x.nhi_withheld || 0);
+  return w ? `-${money(w)}<div class="muted">稅 ${money(x.tax_withheld)}／健保 ${money(x.nhi_withheld)}</div>` : '—';
+}
+const paidToast = (label, r) => r.tax_withheld || r.nhi_withheld
+  ? `${label}應付 ${money(r.net)}，代扣後實匯 ${money(r.pay_amount)}`
+  : `${label}實付 ${money(r.net)}`;
+
 async function subDetail(id, done) {
   const s = await GET('/subcontracts/' + id);
   const dedu = await GET(`/subcontracts/${id}/deductions`).catch(() => []);
@@ -82,14 +91,18 @@ async function subDetail(id, done) {
       </div>
       <div class="card">
         <div class="card-head"><h4>估驗計價</h4><button class="btn tiny" id="va-add">新增一期估驗</button></div>
-        ${UI.table(['期別', '日期', '累計％', '本期估驗', '保留款', '保固金', '其他扣款', '實付', '狀態', ''],
+        ${s.payee_type === 'individual' ? `<div class="notice">這家是<b>個人</b>工班：每期應付金額會依系統設定代扣所得稅與二代健保補充保費，
+          「實匯」才是要匯出去的錢，代扣的部分要由公司申報繳納。</div>` : ''}
+        ${UI.table(['期別', '日期', '累計％', '本期估驗', '保留款', '保固金', '其他扣款', '應付', '代扣', '實匯', '狀態', ''],
         s.valuations.map(v => `<tr>
           <td>${UI.esc(v.period)}</td><td class="nowrap">${UI.date(v.date)}</td>
           <td class="num">${v.cum_progress}%</td><td class="num">${money(v.gross_amount)}</td>
           <td class="num muted">-${money(v.retention)}</td><td class="num muted">-${money(v.warranty_hold)}</td>
           <td class="num muted">${v.deduction ? '-' + money(v.deduction) : '—'}
             ${v.deduct_note ? `<div class="muted">${UI.esc(v.deduct_note)}</div>` : ''}</td>
-          <td class="num"><strong>${money(v.net_amount)}</strong></td>
+          <td class="num">${money(v.net_amount)}</td>
+          <td class="num muted">${withheldCell(v)}</td>
+          <td class="num"><strong>${money(v.pay_amount)}</strong></td>
           <td>${UI.tag(twText(TW.val_status, v.status), v.status === 'paid' ? 'ok' : 'warn')}</td>
           <td class="nowrap">${v.status === 'confirmed' ? `<button class="btn tiny" data-vapay="${v.id}">付款</button>` : ''}
             ${v.status !== 'paid' && v.id === lastVal ? `<button class="btn tiny secondary" data-vaedit="${v.id}">編輯</button>` : ''}
@@ -100,9 +113,10 @@ async function subDetail(id, done) {
         <div class="card-head"><h4>保留款／保固金退還</h4>
           <span><button class="btn tiny secondary" data-rel="retention">退保留款</button>
           <button class="btn tiny secondary" data-rel="warranty">退保固金</button></span></div>
-        ${UI.table(['日期', '種類', '金額', '備註'], s.releases.map(r => `<tr>
+        ${UI.table(['日期', '種類', '金額', '代扣', '實匯', '備註'], s.releases.map(r => `<tr>
           <td class="nowrap">${UI.date(r.date)}</td><td>${twText(TW.release_kind, r.kind)}</td>
-          <td class="num">${money(r.amount)}</td><td class="muted">${UI.esc(r.note || '')}</td></tr>`), '還沒有退款紀錄')}
+          <td class="num">${money(r.amount)}</td><td class="num muted">${withheldCell(r)}</td>
+          <td class="num">${money(r.pay_amount)}</td><td class="muted">${UI.esc(r.note || '')}</td></tr>`), '還沒有退款紀錄')}
       </div>
     </div>`
   });
@@ -149,11 +163,13 @@ async function subDetail(id, done) {
         <div><b>發包總價</b>${UI.fmtMoney(s.amount)}</div>
       </div>
       <h2>各期估驗</h2>
-      ${UI.ptable(['期別', '估驗日', '#累計%', '#本期估驗', '#保留款', '#保固金', '#其他扣款', '#實付', '狀態'],
+      ${UI.ptable(['期別', '估驗日', '#累計%', '#本期估驗', '#保留款', '#保固金', '#其他扣款', '#應付', '#代扣稅費', '#實匯', '狀態'],
         s.valuations.map(v => [UI.esc(v.period), UI.esc(v.date), v.cum_progress + '%',
           UI.fmtMoney(v.gross_amount), '-' + UI.fmtMoney(v.retention), '-' + UI.fmtMoney(v.warranty_hold),
           v.deduction ? '-' + UI.fmtMoney(v.deduction) : '—', UI.fmtMoney(v.net_amount),
-          twText(TW.val_status, v.status)]))}
+          v.tax_withheld || v.nhi_withheld ? '-' + UI.fmtMoney(v.tax_withheld + v.nhi_withheld) : '—',
+          UI.fmtMoney(v.pay_amount), twText(TW.val_status, v.status)]))}
+      ${s.payee_type === 'individual' ? `<div class="note muted">代扣稅費＝所得稅＋二代健保補充保費，由本公司代為申報繳納。</div>` : ''}
       <div class="total">累計估驗　${UI.fmtMoney(s.valued)}（完成 ${s.cum_progress}%）</div>
       <div class="total">累計已付　${UI.fmtMoney(s.paid)}</div>
       <div class="total">已確認待付　${UI.fmtMoney(s.unpaid)}</div>
@@ -204,7 +220,7 @@ async function subDetail(id, done) {
           要取消求償請刪掉這期重做。</div>` : ''}`,
       onSubmit: async el => {
         const r = await PUT('/valuations/' + v.id, UI.formData(el));
-        UI.toast(`已儲存：本期估驗 ${money(r.gross)}，實付 ${money(r.net)}`);
+        UI.toast(`已儲存：本期估驗 ${money(r.gross)}，${paidToast('', r)}`);
         refresh();
       }
     });
@@ -235,7 +251,7 @@ async function subDetail(id, done) {
       <div class="muted">保留款 ${s.retention_pct}%、保固金 ${s.warranty_pct}% 會自動從本期估驗扣下。</div>`,
     onSubmit: async el => {
       const r = await POST(`/subcontracts/${id}/valuations`, UI.formData(el));
-      UI.toast(`本期估驗 ${money(r.gross)}，實付 ${money(r.net)}`);
+      UI.toast(`本期估驗 ${money(r.gross)}，${paidToast('', r)}`);
       refresh();
     }
   });

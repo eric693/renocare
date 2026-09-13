@@ -33,6 +33,19 @@ function ensureColumns(table, cols) {
 // 是因為「不能扣第二次」這件事要靠它擋住。
 ensureColumns('defects', { deducted_valuation_id: 'INTEGER' });
 
+// 付給個人工班要代扣所得稅與二代健保補充保費；公司行號開發票不必。
+// 舊資料一律視為公司行號，實匯金額補成原本的應付金額。
+ensureColumns('vendors', { payee_type: "TEXT NOT NULL DEFAULT 'company'" });
+for (const t of ['valuations', 'retention_releases']) {
+  ensureColumns(t, {
+    tax_withheld: 'INTEGER NOT NULL DEFAULT 0',
+    nhi_withheld: 'INTEGER NOT NULL DEFAULT 0',
+    pay_amount: 'INTEGER NOT NULL DEFAULT 0'
+  });
+}
+db.exec('UPDATE valuations SET pay_amount = net_amount - tax_withheld - nhi_withheld WHERE pay_amount = 0 AND net_amount > 0');
+db.exec('UPDATE retention_releases SET pay_amount = amount - tax_withheld - nhi_withheld WHERE pay_amount = 0 AND amount > 0');
+
 const UI_TEXT_KEYS = ['ui_login_title', 'ui_login_sub', 'ui_demo_hint'];
 
 // 系統簽章密鑰（首次啟動自動產生）
@@ -62,18 +75,33 @@ const DEFAULT_LISTS = {
   payment_methods: '匯款,現金,支票,刷卡',
   permit_kinds: '室內裝修審查許可,消防圖說審查,竣工查驗,使用執照變更,大樓施工申請,拆除申報',
   customer_sources: '口碑介紹,官網,Instagram,Facebook,建商合作,舊客回流,房仲介紹',
-  // 請款節點範本：套用到新案時一次展開成 billing_milestones
-  milestone_template: '訂金:30,開工款:30,木作進場:20,完工驗收:15,交屋尾款:5',
+  // 請款節點範本：套用到新案時一次展開成 billing_milestones。
+  // 比例依內政部「建築物室內裝修－工程承攬契約書範本」的上限：簽約金 ≤5%、第二期 ≤25%、第三期 ≤30%、
+  // 完工清潔 ≤30%，餘款在驗收並取得室內裝修合格證明後支付。
+  milestone_template: '簽約金:5,水電完成:25,木作完成:30,完工清潔:30,驗收交屋:10',
   // 工序範本：名稱:工種:天數:與前一項的間隔天數
   schedule_template: '保護工程:清潔:2:0,拆除:拆除:3:0,泥作:泥作:10:0,水電配管:水電:8:0,鋁窗玻璃:玻璃鋁窗:3:0,木作:木作:18:0,油漆:油漆:12:2,系統櫃安裝:系統櫃:4:0,廚具衛浴:廚具:4:0,地板:地板:3:0,空調:空調:3:0,細清:清潔:2:0,驗收點交:統包:2:0',
   default_retention_pct: '10',
   default_warranty_pct: '5',
   default_warranty_months: '12',
   // 逾期／到期的提醒天數
-  alert_days: '7'
+  alert_days: '7',
+  // 工期遲延違約金：合約沒約定每日金額時，依範本「每逾 1 日工程總價千分之一，總額以 10% 為限」
+  penalty_permille: '1',
+  penalty_cap_pct: '10',
+  // 付給個人工班的代扣（執行業務所得）：所得稅 10%，單次給付超過 2 萬元才扣；
+  // 二代健保補充保費 2.11%，單次給付達 2 萬元起扣。法規調整時改設定即可
+  withhold_pct: '10',
+  withhold_over: '20000',
+  nhi_pct: '2.11',
+  nhi_from: '20000'
 };
 for (const [k, v] of Object.entries(DEFAULT_LISTS)) {
   if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(k) === undefined) setSetting(k, v);
+}
+// 舊版預設的請款範本訂金 30%，遠超過範本「簽約金不得逾 5%」。使用者沒改過的才換成新預設，改過的尊重原設定
+if (getSetting('milestone_template') === '訂金:30,開工款:30,木作進場:20,完工驗收:15,交屋尾款:5') {
+  setSetting('milestone_template', DEFAULT_LISTS.milestone_template);
 }
 
 function listSetting(key) {
